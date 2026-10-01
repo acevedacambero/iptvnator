@@ -145,8 +145,9 @@ export class MpvJsonIpcClient {
         this.socket?.destroy();
         this.socket = socket;
         this.buffer = '';
-        socket.setEncoding('utf8');
-        socket.on('data', (chunk: string) => this.onData(chunk));
+        socket.on('data', (chunk: Buffer | string) =>
+            this.onData(chunk.toString('utf8'))
+        );
         socket.on('error', (error) => this.onSocketClosed(error));
         socket.on('close', () =>
             this.onSocketClosed(new Error('MPV JSON IPC pipe closed.'))
