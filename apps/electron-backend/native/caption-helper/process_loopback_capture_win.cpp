@@ -6,20 +6,21 @@
 #include <audioclientactivationparams.h>
 #include <mmdeviceapi.h>
 #include <propidl.h>
+#include <winternl.h>
 #include <wrl.h>
 
-#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <string>
 #include <vector>
 
+using Microsoft::WRL::ClassicCom;
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::FtmBase;
 using Microsoft::WRL::RuntimeClass;
 using Microsoft::WRL::RuntimeClassFlags;
-using Microsoft::WRL::ClassicCom;
 
 namespace {
 
@@ -52,37 +53,33 @@ private:
     HANDLE handle_ = nullptr;
 };
 
-struct RtlOsVersionInfo {
-    ULONG size;
-    ULONG major;
-    ULONG minor;
-    ULONG build;
-    ULONG platformId;
-    WCHAR csdVersion[128];
-};
-
 DWORD currentWindowsBuild()
 {
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (!ntdll) {
         return 0;
     }
-    using RtlGetVersionFn = LONG(WINAPI*)(RtlOsVersionInfo*);
+    using RtlGetVersionFn = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
     auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
         GetProcAddress(ntdll, "RtlGetVersion")
     );
     if (!rtlGetVersion) {
         return 0;
     }
-    RtlOsVersionInfo info{};
-    info.size = sizeof(info);
-    return rtlGetVersion(&info) == 0 ? static_cast<DWORD>(info.build) : 0;
+    RTL_OSVERSIONINFOW info{};
+    info.dwOSVersionInfoSize = sizeof(info);
+    return rtlGetVersion(&info) == 0 ? info.dwBuildNumber : 0;
 }
 
 std::string hresultHex(HRESULT hr)
 {
     char buffer[32]{};
-    std::snprintf(buffer, sizeof(buffer), "0x%08lX", static_cast<unsigned long>(hr));
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "0x%08lX",
+        static_cast<unsigned long>(hr)
+    );
     return buffer;
 }
 
