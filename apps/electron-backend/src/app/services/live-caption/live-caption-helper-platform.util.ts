@@ -46,8 +46,7 @@ function getPackagedNativeDirs(): string[] {
     ]);
 }
 
-/** Returns the trusted Windows process-loopback helper for this app layout. */
-export function resolveLiveCaptionHelperPath(): string | null {
+function resolveWindowsHelper(fileName: string): string | null {
     if (process.platform !== 'win32') {
         return null;
     }
@@ -55,7 +54,7 @@ export function resolveLiveCaptionHelperPath(): string | null {
         ? getPackagedNativeDirs()
         : [getLocalNativeDir(), ...getDistNativeDirs()];
     for (const directory of dedupeDefinedPaths(directories)) {
-        const candidate = path.join(directory, 'iptvnator_caption_helper.exe');
+        const candidate = path.join(directory, fileName);
         try {
             accessSync(candidate, fsConstants.X_OK);
             if (statSync(candidate).isFile()) {
@@ -66,4 +65,14 @@ export function resolveLiveCaptionHelperPath(): string | null {
         }
     }
     return null;
+}
+
+/** Returns the trusted Windows process-loopback helper for this app layout. */
+export function resolveLiveCaptionHelperPath(): string | null {
+    return resolveWindowsHelper('iptvnator_caption_helper.exe');
+}
+
+/** Returns the pinned whisper.cpp worker for this app layout. */
+export function resolveLiveCaptionWhisperHelperPath(): string | null {
+    return resolveWindowsHelper('iptvnator_whisper_helper.exe');
 }
