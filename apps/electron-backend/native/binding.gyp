@@ -200,6 +200,36 @@
           }
         ]
       ]
+    },
+    {
+      "target_name": "iptvnator_caption_helper",
+      "type": "none",
+      "conditions": [
+        [
+          "OS==\"win\"",
+          {
+            "type": "executable",
+            "sources": [
+              "caption-helper/process_loopback_capture_win.cpp"
+            ],
+            "defines": [
+              "WIN32_LEAN_AND_MEAN",
+              "NOMINMAX"
+            ],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "LanguageStandard": "stdcpp20"
+              }
+            },
+            "libraries": [
+              "mmdevapi.lib",
+              "ole32.lib",
+              "uuid.lib"
+            ]
+          }
+        ]
+      ]
     }
   ]
 }
