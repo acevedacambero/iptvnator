@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import {
     EMBEDDED_MPV_ADD_SUBTITLE,
+    EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY,
     EMBEDDED_MPV_CREATE_SESSION,
     EMBEDDED_MPV_DISPOSE_SESSION,
     EMBEDDED_MPV_GET_FRAME_SOURCE,
@@ -9,6 +10,7 @@ import {
     EMBEDDED_MPV_SEEK,
     EMBEDDED_MPV_SEEK_BY,
     EMBEDDED_MPV_SELECT_SUBTITLE_FILE,
+    EMBEDDED_MPV_SET_AI_CAPTION_OVERLAY,
     EMBEDDED_MPV_SET_ASPECT,
     EMBEDDED_MPV_SET_AUDIO_TRACK,
     EMBEDDED_MPV_SET_BOUNDS,
@@ -18,6 +20,7 @@ import {
     EMBEDDED_MPV_SET_SUBTITLE_STYLE,
     EMBEDDED_MPV_SET_SUBTITLE_TRACK,
     EMBEDDED_MPV_SET_VOLUME,
+    EmbeddedMpvAiCaptionOverlay,
     EmbeddedMpvSubtitleStyle,
     EMBEDDED_MPV_GET_DEFAULT_RECORDING_FOLDER,
     EMBEDDED_MPV_SELECT_RECORDING_FOLDER,
@@ -26,6 +29,7 @@ import {
     EMBEDDED_MPV_SUPPORT,
     EmbeddedMpvBounds,
     EmbeddedMpvRecordingStartOptions,
+    EmbeddedMpvSupport,
     ResolvedPortalPlayback,
 } from '@iptvnator/shared/interfaces';
 import {
@@ -33,6 +37,7 @@ import {
     embeddedMpvNativeService,
 } from '../services/embedded-mpv-native.service';
 import { readEmbeddedMpvSessionOptions } from '../services/embedded-mpv-session-options';
+import { liveCaptionMpvOverlayService } from '../services/live-caption/live-caption-mpv-overlay.service';
 
 export default class EmbeddedMpvEvents {
     static bootstrapEmbeddedMpvEvents(): Electron.IpcMain {
@@ -42,6 +47,24 @@ export default class EmbeddedMpvEvents {
 
 function getService(): EmbeddedMpvNativeService {
     return embeddedMpvNativeService;
+}
+
+function withAiCaptionSupport(support: EmbeddedMpvSupport): EmbeddedMpvSupport {
+    if (
+        !support.supported ||
+        support.platform !== 'win32' ||
+        support.engine !== 'native' ||
+        !support.capabilities
+    ) {
+        return support;
+    }
+    return {
+        ...support,
+        capabilities: {
+            ...support.capabilities,
+            aiCaptionOverlay: true,
+        },
+    };
 }
 
 /**
@@ -64,21 +87,46 @@ function handleEmbeddedMpv<Args extends unknown[]>(
     });
 }
 
-handleEmbeddedMpv(EMBEDDED_MPV_SUPPORT, () => getService().getSupport());
+handleEmbeddedMpv(EMBEDDED_MPV_SUPPORT, () =>
+    withAiCaptionSupport(getService().getSupport())
+);
 
-handleEmbeddedMpv(EMBEDDED_MPV_PREPARE, () => getService().prepareAddon());
+handleEmbeddedMpv(EMBEDDED_MPV_PREPARE, () =>
+    withAiCaptionSupport(getService().prepareAddon())
+);
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_CREATE_SESSION,
-    (bounds: EmbeddedMpvBounds, title?: string, initialVolume?: number) =>
-        // Settings are read here, per session, so the service itself never
-        // touches the config store (constructed at module load).
-        getService().createSession(
+    (bounds: EmbeddedMpvBounds, title?: string, initialVolume?: number) => {
+        // Windows native-view gets a private JSON IPC pipe for AI captions.
+        // The path is injected after the user's extra options so a Settings
+        // line cannot redirect this security-sensitive control channel.
+        const options = readEmbeddedMpvSessionOptions();
+        const enableAiCaptionPipe =
+            process.platform === 'win32' &&
+            getService().getActiveEngine() === 'native';
+        const pipePath = enableAiCaptionPipe
+            ? liveCaptionMpvOverlayService.createPipePath()
+            : null;
+        const session = getService().createSession(
             bounds,
             title,
             initialVolume,
-            readEmbeddedMpvSessionOptions()
-        )
+            pipePath
+                ? {
+                      ...options,
+                      extraOptions: [
+                          ...options.extraOptions,
+                          `input-ipc-server=${pipePath}`,
+                      ],
+                  }
+                : options
+        );
+        if (pipePath) {
+            liveCaptionMpvOverlayService.registerSession(session.id, pipePath);
+        }
+        return session;
+    }
 );
 
 handleEmbeddedMpv(
@@ -149,6 +197,17 @@ handleEmbeddedMpv(EMBEDDED_MPV_SELECT_SUBTITLE_FILE, () =>
     getService().selectSubtitleFile()
 );
 
+handleEmbeddedMpv(
+    EMBEDDED_MPV_SET_AI_CAPTION_OVERLAY,
+    (sessionId: string, overlay: EmbeddedMpvAiCaptionOverlay) =>
+        liveCaptionMpvOverlayService.setOverlay(sessionId, overlay)
+);
+
+handleEmbeddedMpv(
+    EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY,
+    (sessionId: string) => liveCaptionMpvOverlayService.clearOverlay(sessionId)
+);
+
 handleEmbeddedMpv(EMBEDDED_MPV_SET_SPEED, (sessionId: string, speed: number) =>
     getService().setSpeed(sessionId, speed)
 );
@@ -177,14 +236,16 @@ handleEmbeddedMpv(EMBEDDED_MPV_SELECT_RECORDING_FOLDER, () =>
     getService().selectRecordingFolder()
 );
 
-handleEmbeddedMpv(EMBEDDED_MPV_DISPOSE_SESSION, (sessionId: string) =>
-    getService().disposeSession(sessionId)
-);
+handleEmbeddedMpv(EMBEDDED_MPV_DISPOSE_SESSION, (sessionId: string) => {
+    liveCaptionMpvOverlayService.disposeSession(sessionId);
+    return getService().disposeSession(sessionId);
+});
 
 handleEmbeddedMpv(EMBEDDED_MPV_GET_FRAME_SOURCE, (sessionId: string) =>
     getService().getFrameSource(sessionId)
 );
 
 export function shutdownEmbeddedMpv(): void {
+    liveCaptionMpvOverlayService.shutdown();
     getService().shutdown();
 }
