@@ -37,7 +37,10 @@ import {
     embeddedMpvNativeService,
 } from '../services/embedded-mpv-native.service';
 import { readEmbeddedMpvSessionOptions } from '../services/embedded-mpv-session-options';
+import { buildAiCaptionAssOverlay } from '../services/live-caption/ai-caption-ass';
 import { liveCaptionMpvOverlayService } from '../services/live-caption/live-caption-mpv-overlay.service';
+
+const AI_CAPTION_P0_TEST_ENV = 'IPTVNATOR_AI_CAPTION_P0_TEST';
 
 export default class EmbeddedMpvEvents {
     static bootstrapEmbeddedMpvEvents(): Electron.IpcMain {
@@ -47,6 +50,12 @@ export default class EmbeddedMpvEvents {
 
 function getService(): EmbeddedMpvNativeService {
     return embeddedMpvNativeService;
+}
+
+function isAiCaptionP0TestEnabled(): boolean {
+    return ['1', 'true', 'yes', 'on'].includes(
+        (process.env[AI_CAPTION_P0_TEST_ENV] ?? '').trim().toLowerCase()
+    );
 }
 
 function withAiCaptionSupport(support: EmbeddedMpvSupport): EmbeddedMpvSupport {
@@ -131,8 +140,27 @@ handleEmbeddedMpv(
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_LOAD_PLAYBACK,
-    (sessionId: string, playback: ResolvedPortalPlayback) =>
-        getService().loadPlayback(sessionId, playback)
+    async (sessionId: string, playback: ResolvedPortalPlayback) => {
+        const result = getService().loadPlayback(sessionId, playback);
+        // P0 probe: opt-in only. It proves the full Windows libmpv named-pipe
+        // -> JSON IPC -> ASS OSD path (including Chinese glyph rendering)
+        // before WASAPI/Whisper are introduced. Normal builds never show it.
+        if (
+            isAiCaptionP0TestEnabled() &&
+            process.platform === 'win32' &&
+            getService().getActiveEngine() === 'native'
+        ) {
+            await liveCaptionMpvOverlayService.setOverlay(
+                sessionId,
+                buildAiCaptionAssOverlay({
+                    mode: 'bilingual',
+                    sourceText: 'IPTVnator AI live captions — P0 overlay path active',
+                    translatedText: 'IPTVnator AI 实时双语字幕 — P0 显示通道已启用',
+                })
+            );
+        }
+        return result;
+    }
 );
 
 handleEmbeddedMpv(
