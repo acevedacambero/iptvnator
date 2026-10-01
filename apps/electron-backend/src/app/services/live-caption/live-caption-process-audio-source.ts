@@ -1,4 +1,5 @@
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessByStdio, spawn } from 'child_process';
+import { Readable } from 'stream';
 import { resolveLiveCaptionHelperPath } from './live-caption-helper-platform.util';
 
 export interface LiveCaptionPcmFormat {
@@ -31,6 +32,8 @@ interface HelperStatusMessage {
     reason?: string;
 }
 
+type CaptionHelperProcess = ChildProcessByStdio<null, Readable, Readable>;
+
 /**
  * Starts the Windows process-loopback helper and exposes its stdout as raw
  * 16 kHz mono signed-16 PCM. The helper targets the Electron main process,
@@ -38,7 +41,7 @@ interface HelperStatusMessage {
  * tree as required by the Windows process-loopback API.
  */
 export class LiveCaptionProcessAudioSource {
-    private child: ChildProcessWithoutNullStreams | null = null;
+    private child: CaptionHelperProcess | null = null;
     private stderrBuffer = '';
     private stopping = false;
 
