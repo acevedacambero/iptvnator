@@ -79,6 +79,95 @@ function run(command, args) {
     }
 }
 
+function runCapture(command, args) {
+    const result = spawnSync(command, args, {
+        cwd: workspaceRoot,
+        env: process.env,
+        encoding: 'utf8',
+    });
+    if (result.error) {
+        throw result.error;
+    }
+    if (result.status !== 0) {
+        throw new Error(
+            `${command} ${args.join(' ')} failed with status ${result.status ?? 1}.`
+        );
+    }
+    return String(result.stdout ?? '').trim();
+}
+
+function findVsWhere() {
+    const explicit = process.env.VSWHERE_PATH;
+    if (explicit && fs.existsSync(explicit)) {
+        return explicit;
+    }
+    const programFilesX86 = process.env['ProgramFiles(x86)'];
+    if (!programFilesX86) {
+        return undefined;
+    }
+    const candidate = path.join(
+        programFilesX86,
+        'Microsoft Visual Studio',
+        'Installer',
+        'vswhere.exe'
+    );
+    return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+function resolveVisualStudioGenerator() {
+    const vswhere = findVsWhere();
+    if (!vswhere) {
+        throw new Error(
+            'Visual Studio Installer vswhere.exe was not found. Install Visual Studio Build Tools with the Desktop development with C++ workload.'
+        );
+    }
+
+    const version = runCapture(vswhere, [
+        '-latest',
+        '-products',
+        '*',
+        '-requires',
+        'Microsoft.VisualStudio.Workload.VCTools',
+        '-property',
+        'installationVersion',
+    ]);
+    const major = Number.parseInt(version.split('.')[0] ?? '', 10);
+    if (!Number.isFinite(major)) {
+        throw new Error(
+            `Unable to determine the installed Visual Studio version from vswhere output: ${version || '(empty)'}.`
+        );
+    }
+
+    const generator =
+        major >= 18
+            ? 'Visual Studio 18 2026'
+            : major >= 17
+              ? 'Visual Studio 17 2022'
+              : undefined;
+    if (!generator) {
+        throw new Error(
+            `Visual Studio ${version} is too old. Visual Studio 2022 or newer is required.`
+        );
+    }
+
+    const cmakeHelp = runCapture('cmake', ['--help']);
+    if (!cmakeHelp.includes(generator)) {
+        const versionText = runCapture('cmake', ['--version'])
+            .split(/\r?\n/)[0]
+            .trim();
+        const requirement =
+            major >= 18
+                ? 'CMake 4.2 or newer is required for the Visual Studio 18 2026 generator.'
+                : 'Install a CMake build that supports the Visual Studio 17 2022 generator.';
+        throw new Error(
+            `${generator} is installed, but ${versionText || 'the current CMake'} does not provide that generator. ${requirement}`
+        );
+    }
+
+    log(`Using ${generator} for Visual Studio ${version}.`);
+    return generator;
+}
+
 function validatePinnedSource() {
     if (!fs.existsSync(stampPath)) {
         return false;
@@ -140,13 +229,14 @@ function main() {
     fs.mkdirSync(buildRoot, { recursive: true });
     fs.mkdirSync(outputDir, { recursive: true });
 
+    const generator = resolveVisualStudioGenerator();
     run('cmake', [
         '-S',
         helperSourceRoot,
         '-B',
         buildRoot,
         '-G',
-        'Visual Studio 17 2022',
+        generator,
         '-A',
         'x64',
         `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\', '/')}`,
