@@ -43,13 +43,12 @@ describe('AiSyncController', () => {
             );
         }
 
-        expect(sync.snapshot()).toMatchObject({
-            clockAnchorCount: 1,
-            captionLagSampleCount: 10,
-            lastCaptionLagMs: 1000,
-            p50CaptionLagMs: 500,
-            p95CaptionLagMs: 1000,
-        });
+        const telemetry = sync.snapshot();
+        expect(telemetry.clockAnchorCount).toBe(1);
+        expect(telemetry.captionLagSampleCount).toBe(10);
+        expect(telemetry.lastCaptionLagMs).toBeCloseTo(1000, 6);
+        expect(telemetry.p50CaptionLagMs).toBeCloseTo(500, 6);
+        expect(telemetry.p95CaptionLagMs).toBeCloseTo(1000, 6);
     });
 
     it('retains negative lag during measurement so a bad clock mapping is visible', () => {
@@ -85,12 +84,11 @@ describe('AiSyncController', () => {
                 (mappedPts as number) + lagMs / 1000
             );
         }
-        expect(sync.snapshot()).toMatchObject({
-            clockAnchorCount: 2,
-            captionLagSampleCount: 2,
-            p50CaptionLagMs: 200,
-            p95CaptionLagMs: 300,
-        });
+        const telemetry = sync.snapshot();
+        expect(telemetry.clockAnchorCount).toBe(2);
+        expect(telemetry.captionLagSampleCount).toBe(2);
+        expect(telemetry.p50CaptionLagMs).toBeCloseTo(200, 6);
+        expect(telemetry.p95CaptionLagMs).toBeCloseTo(300, 6);
 
         sync.reset();
         expect(sync.mapCaptureQpcToPlaybackPts(qpc)).toBeNull();
