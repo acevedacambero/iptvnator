@@ -173,6 +173,7 @@ try {
         }
         $builderJson = $builder | ConvertTo-Json -Depth 100
         [IO.File]::WriteAllText($builderPath, $builderJson + "`n", $utf8NoBom)
+        $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 
         Write-Step 'Building unsigned local Windows package'
         Invoke-Checked 'pnpm' @('run', 'make:app', '--', '--publishPolicy=never')
@@ -200,9 +201,7 @@ try {
             $env:IPTVNATOR_AI_CAPTION_P0_TEST = '1'
             Start-Process -FilePath $unpackedExe.FullName
             Write-Host 'Open any channel with Embedded MPV Native View.' -ForegroundColor Yellow
-            Write-Host 'Expected overlay:' -ForegroundColor Yellow
-            Write-Host '  IPTVnator AI live captions — P0 overlay path active'
-            Write-Host '  IPTVnator AI 实时双语字幕 — P0 显示通道已启用'
+            Write-Host 'Expected: a fixed two-line bilingual overlay; the second line must render Simplified Chinese glyphs correctly.' -ForegroundColor Yellow
         }
     }
 
