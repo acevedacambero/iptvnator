@@ -1,0 +1,117 @@
+@if (available) {
+    <div
+        class="setting-item"
+        data-setting-id="live-caption-translation"
+        data-test-id="live-caption-translation-setting"
+    >
+        <div class="setting-item__meta">
+            <h4>AI live caption translation</h4>
+            <p>
+                Show English speech recognition immediately, then add a
+                Simplified Chinese translation when the configured
+                OpenAI-compatible provider responds. Translation failures do
+                not stop English captions.
+            </p>
+            @if (!loading && !encryptionAvailable) {
+                <p class="live-caption-translation-error">
+                    Secure credential storage is unavailable on this system.
+                    English live captions still work, but an API key cannot be
+                    saved here.
+                </p>
+            }
+        </div>
+
+        <div class="setting-item__control live-caption-translation-fields">
+            <mat-checkbox
+                [(ngModel)]="enabled"
+                [disabled]="loading || saving"
+                data-test-id="live-caption-translation-toggle"
+            >
+                Enable Chinese translation
+            </mat-checkbox>
+
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <mat-label>OpenAI-compatible API URL</mat-label>
+                <input
+                    matInput
+                    type="url"
+                    [(ngModel)]="baseUrl"
+                    [disabled]="loading || saving"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="https://api.openai.com/v1"
+                />
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <mat-label>Translation model</mat-label>
+                <input
+                    matInput
+                    type="text"
+                    [(ngModel)]="model"
+                    [disabled]="loading || saving"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Enter the provider model name"
+                />
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <mat-label>Target language</mat-label>
+                <input
+                    matInput
+                    type="text"
+                    [(ngModel)]="targetLanguage"
+                    [disabled]="loading || saving"
+                    autocomplete="off"
+                    spellcheck="false"
+                />
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <mat-label>API key</mat-label>
+                <input
+                    matInput
+                    type="password"
+                    [(ngModel)]="apiKey"
+                    [disabled]="loading || saving || !encryptionAvailable"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    placeholder="{{ hasApiKey ? 'Saved securely — leave blank to keep it' : 'Enter API key' }}"
+                />
+                <mat-hint>
+                    The key is write-only in the UI and encrypted by Electron
+                    safeStorage before it is written to disk.
+                </mat-hint>
+            </mat-form-field>
+
+            <div class="live-caption-translation-actions">
+                <button
+                    mat-flat-button
+                    type="button"
+                    (click)="save()"
+                    [disabled]="loading || saving"
+                    data-test-id="live-caption-translation-save"
+                >
+                    {{ saving ? 'Saving…' : 'Save translation settings' }}
+                </button>
+                @if (hasApiKey) {
+                    <button
+                        mat-button
+                        type="button"
+                        (click)="clearApiKey()"
+                        [disabled]="loading || saving"
+                    >
+                        Remove API key
+                    </button>
+                }
+                @if (saved) {
+                    <span class="live-caption-translation-status">{{ saved }}</span>
+                }
+            </div>
+            @if (error) {
+                <div class="live-caption-translation-error">{{ error }}</div>
+            }
+        </div>
+    </div>
+}
