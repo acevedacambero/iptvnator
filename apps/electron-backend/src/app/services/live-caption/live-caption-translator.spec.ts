@@ -11,6 +11,46 @@ describe('LiveCaptionTranslator', () => {
         jest.restoreAllMocks();
     });
 
+    it('uses Google free translation without an API key', async () => {
+        const fetchMock = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => [
+                [
+                    ['美联储', 'The Federal Reserve', null, null, 10],
+                    ['维持利率不变。', ' kept rates unchanged.', null, null, 10],
+                ],
+                null,
+                'en',
+            ],
+        });
+        globalThis.fetch = fetchMock as typeof fetch;
+
+        const translator = new LiveCaptionTranslator({
+            enabled: true,
+            provider: 'google-free',
+            targetLanguage: 'Simplified Chinese',
+        });
+
+        const result = await translator.translate(
+            'The Federal Reserve kept rates unchanged.'
+        );
+
+        expect(result.text).toBe('美联储维持利率不变。');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+        expect(`${requestUrl.origin}${requestUrl.pathname}`).toBe(
+            'https://translate.googleapis.com/translate_a/single'
+        );
+        expect(requestUrl.searchParams.get('client')).toBe('gtx');
+        expect(requestUrl.searchParams.get('sl')).toBe('en');
+        expect(requestUrl.searchParams.get('tl')).toBe('zh-CN');
+        expect(requestUrl.searchParams.get('dt')).toBe('t');
+        expect(requestUrl.searchParams.get('q')).toBe(
+            'The Federal Reserve kept rates unchanged.'
+        );
+    });
+
     it('sends an OpenAI-compatible chat completion request', async () => {
         const fetchMock = jest.fn().mockResolvedValue({
             ok: true,
@@ -84,6 +124,7 @@ describe('LiveCaptionTranslator', () => {
         }) as typeof fetch;
 
         const translator = new LiveCaptionTranslator({
+            provider: 'openai-compatible',
             apiKey: 'secret-key',
             model: 'translation-model',
         });
@@ -93,11 +134,12 @@ describe('LiveCaptionTranslator', () => {
         );
     });
 
-    it('rejects incomplete translation configuration before network use', () => {
+    it('rejects incomplete OpenAI-compatible configuration before network use', () => {
         expect(
             () =>
                 new LiveCaptionTranslator({
                     enabled: true,
+                    provider: 'openai-compatible',
                     apiKey: '',
                     model: 'translation-model',
                 })
@@ -106,6 +148,7 @@ describe('LiveCaptionTranslator', () => {
             () =>
                 new LiveCaptionTranslator({
                     enabled: true,
+                    provider: 'openai-compatible',
                     apiKey: 'secret-key',
                     model: '',
                 })
@@ -125,6 +168,9 @@ describe('LiveCaptionTranslator', () => {
         expect(
             normalizeLiveCaptionTranslationBaseUrl('https://example.test/v1/')
         ).toBe('https://example.test/v1');
+        expect(
+            normalizeLiveCaptionTranslationBaseUrl(undefined, 'google-free')
+        ).toBe('https://translate.googleapis.com');
     });
 
     it('rejects credentials embedded in the endpoint URL', () => {
@@ -144,6 +190,7 @@ describe('LiveCaptionTranslator', () => {
                 })
         ) as typeof fetch;
         const translator = new LiveCaptionTranslator({
+            provider: 'openai-compatible',
             apiKey: 'secret-key',
             model: 'translation-model',
         });
