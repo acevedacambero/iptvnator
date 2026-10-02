@@ -92,18 +92,8 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
         return Boolean(this.api);
     }
 
-    async ngOnInit(): Promise<void> {
-        if (!this.api) {
-            this.loading = false;
-            return;
-        }
-        try {
-            this.apply(await this.api.getTranslationSettings());
-        } catch (error) {
-            this.error = this.message(error);
-        } finally {
-            this.loading = false;
-        }
+    ngOnInit(): void {
+        void this.load();
     }
 
     async save(): Promise<void> {
@@ -154,6 +144,20 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
             this.error = this.message(error);
         } finally {
             this.saving = false;
+        }
+    }
+
+    private async load(): Promise<void> {
+        if (!this.api) {
+            this.loading = false;
+            return;
+        }
+        try {
+            this.apply(await this.api.getTranslationSettings());
+        } catch (error) {
+            this.error = this.message(error);
+        } finally {
+            this.loading = false;
         }
     }
 
