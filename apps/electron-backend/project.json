@@ -56,6 +56,10 @@
                     {
                         "entryName": "main.app",
                         "entryPath": "apps/electron-backend/src/main.ts"
+                    },
+                    {
+                        "entryName": "live-caption.preload",
+                        "entryPath": "apps/electron-backend/src/live-caption.preload.ts"
                     }
                 ],
                 "tsConfig": "apps/electron-backend/tsconfig.app.json",
@@ -155,6 +159,10 @@
                     {
                         "entryName": "main.app",
                         "entryPath": "apps/electron-backend/src/main.ts"
+                    },
+                    {
+                        "entryName": "live-caption.preload",
+                        "entryPath": "apps/electron-backend/src/live-caption.preload.ts"
                     }
                 ],
                 "tsConfig": "apps/electron-backend/tsconfig.app.json",
@@ -215,7 +223,11 @@
                     {
                         "from": "electron-backend",
                         "to": "electron-backend",
-                        "filter": ["main.app.js", "deferred-events.js"]
+                        "filter": [
+                            "main.app.js",
+                            "deferred-events.js",
+                            "live-caption.preload.js"
+                        ]
                     }
                 ],
                 "sourcePath": "dist/apps",
@@ -236,7 +248,11 @@
                     {
                         "from": "electron-backend",
                         "to": "electron-backend",
-                        "filter": ["main.app.js", "deferred-events.js"]
+                        "filter": [
+                            "main.app.js",
+                            "deferred-events.js",
+                            "live-caption.preload.js"
+                        ]
                     }
                 ],
                 "sourcePath": "dist/apps",
