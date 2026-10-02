@@ -59,7 +59,7 @@ function Get-NodeArch {
     return $arch
 }
 
-if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') {
+if ($env:OS -ne 'Windows_NT') {
     throw 'This smoke harness must run on Windows.'
 }
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -67,6 +67,12 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 if ($LaunchP0 -and $SkipPackage) {
     throw '-LaunchP0 requires packaging; remove -SkipPackage.'
+}
+
+foreach ($command in @('node', 'pnpm', 'git', 'cmake')) {
+    if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+        throw "Required command is not on PATH: $command"
+    }
 }
 
 $buildNumber = Get-WindowsBuildNumber
@@ -85,16 +91,10 @@ Push-Location $repoRoot
 
 $builderPath = Join-Path $repoRoot 'electron-builder.json'
 $builderOriginal = [IO.File]::ReadAllText($builderPath)
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 try {
     Write-Step "Windows P0 environment (build $buildNumber, Node $nodeArch)"
-
-    foreach ($command in @('node', 'pnpm', 'git', 'cmake')) {
-        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
-            throw "Required command is not on PATH: $command"
-        }
-    }
 
     if (-not $SkipInstall) {
         Write-Step 'Installing workspace dependencies'
@@ -182,8 +182,8 @@ try {
             Start-Process -FilePath $unpackedExe.FullName
             Write-Host 'Open any channel with Embedded MPV Native View.' -ForegroundColor Yellow
             Write-Host 'Expected overlay:' -ForegroundColor Yellow
-            Write-Host '  IPTVnator AI live captions - P0 overlay path active'
-            Write-Host '  IPTVnator AI 实时双语字幕 - P0 显示通道已启用'
+            Write-Host '  IPTVnator AI live captions — P0 overlay path active'
+            Write-Host '  IPTVnator AI 实时双语字幕 — P0 显示通道已启用'
         }
     }
 
