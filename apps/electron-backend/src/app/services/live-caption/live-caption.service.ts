@@ -6,6 +6,7 @@ import {
 } from '@iptvnator/shared/interfaces';
 import { buildAiCaptionAssOverlay } from './ai-caption-ass';
 import { extractNovelCaptionText } from './caption-overlap';
+import { LiveCaptionCcLineBuffer } from './live-caption-cc-line';
 import { resolveLiveCaptionHelperPath } from './live-caption-helper-platform.util';
 import { ensureDefaultLiveCaptionModel } from './live-caption-model-manager';
 import { liveCaptionMpvOverlayService } from './live-caption-mpv-overlay.service';
@@ -25,7 +26,6 @@ import {
 const MIN_PROCESS_LOOPBACK_BUILD = 20348;
 const MIN_INFERENCE_AUDIO_SECONDS = 1.5;
 const EMPTY_WINDOWS_TO_CLEAR = 3;
-const DISPLAY_WORD_LIMIT = 26;
 
 type StateListener = (state: LiveCaptionState) => void;
 
@@ -41,6 +41,7 @@ interface ActiveCaptionSession {
     whisper: LiveCaptionWhisperClient;
     translator: LiveCaptionTranslator | null;
     window: LiveCaptionPcmWindow;
+    ccLine: LiveCaptionCcLineBuffer;
     lastHypothesis: string;
     committedText: string;
     captionRevision: number;
@@ -59,11 +60,6 @@ function windowsBuildNumber(): number {
     }
     const build = Number.parseInt(os.release().split('.')[2] ?? '', 10);
     return Number.isFinite(build) ? build : 0;
-}
-
-function tailWords(value: string, limit = DISPLAY_WORD_LIMIT): string {
-    const words = value.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
-    return words.slice(Math.max(0, words.length - limit)).join(' ');
 }
 
 function errorMessage(error: unknown): string {
@@ -171,6 +167,7 @@ export class LiveCaptionService {
             whisper: new LiveCaptionWhisperClient(),
             translator,
             window: new LiveCaptionPcmWindow(),
+            ccLine: new LiveCaptionCcLineBuffer(),
             lastHypothesis: '',
             committedText: '',
             captionRevision: 0,
@@ -219,6 +216,7 @@ export class LiveCaptionService {
         active.whisper.stop();
         active.translator?.stop();
         active.window.clear();
+        active.ccLine.clear();
         active.pendingTranslation = null;
         await liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
@@ -296,12 +294,22 @@ export class LiveCaptionService {
             const text = result.text.replace(/\s+/g, ' ').trim();
             if (!text) {
                 active.emptyWindows += 1;
+
+                // Finish a short spoken fragment as one stable CC line before
+                // eventually clearing the overlay on sustained silence.
+                const flushedLine = active.ccLine.flush();
+                if (flushedLine) {
+                    await this.commitCaptionLine(active, flushedLine);
+                    return;
+                }
+
                 if (active.emptyWindows >= EMPTY_WINDOWS_TO_CLEAR) {
                     active.lastHypothesis = '';
                     active.committedText = '';
                     active.lastTranslatedText = '';
                     active.pendingTranslation = null;
                     active.captionRevision += 1;
+                    active.ccLine.clear();
                     await liveCaptionMpvOverlayService.clearOverlay(
                         active.sessionId
                     );
@@ -311,45 +319,63 @@ export class LiveCaptionService {
             }
 
             active.emptyWindows = 0;
-            if (!active.lastHypothesis) {
-                active.committedText = text;
-            } else {
-                const novel = extractNovelCaptionText(
-                    active.lastHypothesis,
-                    text
-                );
-                if (novel) {
-                    active.committedText = `${active.committedText} ${novel}`.trim();
-                }
-            }
+            const novel = active.lastHypothesis
+                ? extractNovelCaptionText(active.lastHypothesis, text)
+                : text;
             active.lastHypothesis = text;
-            active.committedText = tailWords(active.committedText || text);
-            active.captionRevision += 1;
-            active.lastTranslatedText = '';
-
-            // Source text always wins the latency race. Paint it immediately;
-            // translation is a second, non-blocking stage that may update the
-            // same overlay later.
-            await liveCaptionMpvOverlayService.setOverlay(
-                active.sessionId,
-                buildAiCaptionAssOverlay({
-                    sourceText: active.committedText,
-                    mode: 'source-only',
-                })
-            );
-            if (!this.isCurrent(active)) {
+            if (!novel) {
                 return;
             }
-            this.publishActive(active, 'running');
-            this.queueTranslation(active, {
-                sourceText: active.committedText,
-                revision: active.captionRevision,
-            });
+
+            // Do not repaint the growing rolling transcript. Accumulate it
+            // off-screen and emit exactly one stable television-style CC line
+            // at a sentence boundary or word limit.
+            const completedLine = active.ccLine.push(novel);
+            if (!completedLine) {
+                return;
+            }
+            await this.commitCaptionLine(active, completedLine);
         } catch (error) {
             if (this.isCurrent(active)) {
                 this.fail(active, error);
             }
         }
+    }
+
+    private async commitCaptionLine(
+        active: ActiveCaptionSession,
+        sourceText: string
+    ): Promise<void> {
+        if (!this.isCurrent(active) || active.stopping) {
+            return;
+        }
+        const line = sourceText.replace(/\s+/g, ' ').trim();
+        if (!line) {
+            return;
+        }
+
+        active.committedText = line;
+        active.captionRevision += 1;
+        active.lastTranslatedText = '';
+
+        // A completed English CC line appears atomically and is never
+        // rewritten. Translation targets this stable line, so a normal ASR
+        // update no longer invalidates the Chinese result every 500 ms.
+        await liveCaptionMpvOverlayService.setOverlay(
+            active.sessionId,
+            buildAiCaptionAssOverlay({
+                sourceText: line,
+                mode: 'source-only',
+            })
+        );
+        if (!this.isCurrent(active) || active.stopping) {
+            return;
+        }
+        this.publishActive(active, 'running');
+        this.queueTranslation(active, {
+            sourceText: line,
+            revision: active.captionRevision,
+        });
     }
 
     private queueTranslation(
@@ -360,9 +386,8 @@ export class LiveCaptionService {
             return;
         }
         if (active.translator.busy) {
-            // Keep only the newest source snapshot. Live subtitles must never
-            // spend time catching up on translations the viewer can no longer
-            // see.
+            // Keep only the newest completed CC line. A translation of a line
+            // that has already left the screen is no longer useful.
             active.pendingTranslation = request;
             return;
         }
@@ -465,6 +490,7 @@ export class LiveCaptionService {
         active.audio.stop();
         active.whisper.stop();
         active.translator?.stop();
+        active.ccLine.clear();
         active.pendingTranslation = null;
         void liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
