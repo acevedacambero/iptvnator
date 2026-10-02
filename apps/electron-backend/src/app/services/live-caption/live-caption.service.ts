@@ -14,6 +14,7 @@ import {
     LiveCaptionAudioSourceEvent,
     LiveCaptionProcessAudioSource,
 } from './live-caption-process-audio-source';
+import { LiveCaptionTranslator } from './live-caption-translator';
 import { LiveCaptionWhisperClient } from './live-caption-whisper-client';
 import {
     resolveLiveCaptionWhisperHelperPath,
@@ -27,14 +28,26 @@ const DISPLAY_WORD_LIMIT = 26;
 
 type StateListener = (state: LiveCaptionState) => void;
 
+interface PendingTranslation {
+    sourceText: string;
+    revision: number;
+}
+
 interface ActiveCaptionSession {
     sessionId: string;
     generation: number;
     audio: LiveCaptionProcessAudioSource;
     whisper: LiveCaptionWhisperClient;
+    translator: LiveCaptionTranslator | null;
     window: LiveCaptionPcmWindow;
     lastHypothesis: string;
     committedText: string;
+    captionRevision: number;
+    pendingTranslation: PendingTranslation | null;
+    lastTranslatedText: string;
+    lastInferenceMs?: number;
+    lastTranslationMs?: number;
+    translationError?: string;
     emptyWindows: number;
     stopping: boolean;
 }
@@ -52,12 +65,17 @@ function tailWords(value: string, limit = DISPLAY_WORD_LIMIT): string {
     return words.slice(Math.max(0, words.length - limit)).join(' ');
 }
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Windows V1 live-caption orchestrator.
  *
- * Audio capture, ASR and MPV overlay ownership all live in the Electron main
- * process. The renderer can only start/stop the narrow caption pipeline; it
- * never receives MPV's powerful JSON-IPC pipe or raw audio.
+ * Audio capture, ASR, optional translation and MPV overlay ownership all live
+ * in the Electron main process. The renderer can only start/stop the narrow
+ * caption pipeline; it never receives MPV's powerful JSON-IPC pipe or raw
+ * audio.
  */
 export class LiveCaptionService {
     private active: ActiveCaptionSession | null = null;
@@ -125,24 +143,35 @@ export class LiveCaptionService {
 
         await this.stop();
         const generation = ++this.generation;
+        let translator: LiveCaptionTranslator | null = null;
+        let translationError: string | undefined;
+        if (options.translation?.enabled === true) {
+            try {
+                translator = new LiveCaptionTranslator(options.translation);
+            } catch (error) {
+                // Translation is deliberately optional. A bad provider config
+                // must not take source-language live captions down with it.
+                translationError = errorMessage(error);
+            }
+        }
         const active: ActiveCaptionSession = {
             sessionId,
             generation,
             audio: new LiveCaptionProcessAudioSource(),
             whisper: new LiveCaptionWhisperClient(),
+            translator,
             window: new LiveCaptionPcmWindow(),
             lastHypothesis: '',
             committedText: '',
+            captionRevision: 0,
+            pendingTranslation: null,
+            lastTranslatedText: '',
+            ...(translationError ? { translationError } : {}),
             emptyWindows: 0,
             stopping: false,
         };
         this.active = active;
-        this.publish({
-            state: 'starting',
-            active: true,
-            sessionId,
-            generation,
-        });
+        this.publishActive(active, 'starting');
 
         try {
             const modelPath =
@@ -178,7 +207,9 @@ export class LiveCaptionService {
         this.active = null;
         active.audio.stop();
         active.whisper.stop();
+        active.translator?.stop();
         active.window.clear();
+        active.pendingTranslation = null;
         await liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
             .catch(() => undefined);
@@ -203,12 +234,7 @@ export class LiveCaptionService {
             return;
         }
         if (event.type === 'ready') {
-            this.publish({
-                state: 'running',
-                active: true,
-                sessionId: active.sessionId,
-                generation: active.generation,
-            });
+            this.publishActive(active, 'running');
             return;
         }
         if (event.type === 'unsupported') {
@@ -256,22 +282,20 @@ export class LiveCaptionService {
             if (!this.isCurrent(active) || active.stopping) {
                 return;
             }
+            active.lastInferenceMs = result.elapsedMs;
             const text = result.text.replace(/\s+/g, ' ').trim();
             if (!text) {
                 active.emptyWindows += 1;
                 if (active.emptyWindows >= EMPTY_WINDOWS_TO_CLEAR) {
                     active.lastHypothesis = '';
                     active.committedText = '';
+                    active.lastTranslatedText = '';
+                    active.pendingTranslation = null;
+                    active.captionRevision += 1;
                     await liveCaptionMpvOverlayService.clearOverlay(
                         active.sessionId
                     );
-                    this.publish({
-                        state: 'running',
-                        active: true,
-                        sessionId: active.sessionId,
-                        generation: active.generation,
-                        lastInferenceMs: result.elapsedMs,
-                    });
+                    this.publishActive(active, 'running');
                 }
                 return;
             }
@@ -290,31 +314,136 @@ export class LiveCaptionService {
             }
             active.lastHypothesis = text;
             active.committedText = tailWords(active.committedText || text);
+            active.captionRevision += 1;
+            active.lastTranslatedText = '';
 
-            const overlay = buildAiCaptionAssOverlay({
-                sourceText: active.committedText,
-                mode: 'source-only',
-            });
+            // Source text always wins the latency race. Paint it immediately;
+            // translation is a second, non-blocking stage that may update the
+            // same overlay later.
             await liveCaptionMpvOverlayService.setOverlay(
                 active.sessionId,
-                overlay
+                buildAiCaptionAssOverlay({
+                    sourceText: active.committedText,
+                    mode: 'source-only',
+                })
             );
             if (!this.isCurrent(active)) {
                 return;
             }
-            this.publish({
-                state: 'running',
-                active: true,
-                sessionId: active.sessionId,
-                generation: active.generation,
-                lastText: active.committedText,
-                lastInferenceMs: result.elapsedMs,
+            this.publishActive(active, 'running');
+            this.queueTranslation(active, {
+                sourceText: active.committedText,
+                revision: active.captionRevision,
             });
         } catch (error) {
             if (this.isCurrent(active)) {
                 this.fail(active, error);
             }
         }
+    }
+
+    private queueTranslation(
+        active: ActiveCaptionSession,
+        request: PendingTranslation
+    ): void {
+        if (!active.translator || !this.isCurrent(active) || active.stopping) {
+            return;
+        }
+        if (active.translator.busy) {
+            // Keep only the newest source snapshot. Live subtitles must never
+            // spend time catching up on translations the viewer can no longer
+            // see.
+            active.pendingTranslation = request;
+            return;
+        }
+        active.pendingTranslation = null;
+        void this.translateLatest(active, request);
+    }
+
+    private async translateLatest(
+        active: ActiveCaptionSession,
+        request: PendingTranslation
+    ): Promise<void> {
+        const translator = active.translator;
+        if (!translator) {
+            return;
+        }
+        try {
+            const result = await translator.translate(request.sourceText);
+            if (!this.isTranslationCurrent(active, request)) {
+                return;
+            }
+            active.lastTranslatedText = result.text;
+            active.lastTranslationMs = result.elapsedMs;
+            active.translationError = undefined;
+            await liveCaptionMpvOverlayService.setOverlay(
+                active.sessionId,
+                buildAiCaptionAssOverlay({
+                    sourceText: request.sourceText,
+                    translatedText: result.text,
+                    mode: 'bilingual',
+                })
+            );
+            if (this.isTranslationCurrent(active, request)) {
+                this.publishActive(active, 'running');
+            }
+        } catch (error) {
+            if (this.isCurrent(active) && !active.stopping) {
+                active.translationError = errorMessage(error);
+                active.lastTranslatedText = '';
+                this.publishActive(active, 'running');
+            }
+        } finally {
+            if (!this.isCurrent(active) || active.stopping) {
+                return;
+            }
+            const pending = active.pendingTranslation;
+            active.pendingTranslation = null;
+            if (
+                pending &&
+                pending.revision === active.captionRevision &&
+                pending.sourceText === active.committedText
+            ) {
+                this.queueTranslation(active, pending);
+            }
+        }
+    }
+
+    private isTranslationCurrent(
+        active: ActiveCaptionSession,
+        request: PendingTranslation
+    ): boolean {
+        return (
+            this.isCurrent(active) &&
+            !active.stopping &&
+            active.captionRevision === request.revision &&
+            active.committedText === request.sourceText
+        );
+    }
+
+    private publishActive(
+        active: ActiveCaptionSession,
+        state: 'starting' | 'running'
+    ): void {
+        this.publish({
+            state,
+            active: true,
+            sessionId: active.sessionId,
+            generation: active.generation,
+            ...(active.committedText ? { lastText: active.committedText } : {}),
+            ...(active.lastTranslatedText
+                ? { lastTranslatedText: active.lastTranslatedText }
+                : {}),
+            ...(active.lastInferenceMs !== undefined
+                ? { lastInferenceMs: active.lastInferenceMs }
+                : {}),
+            ...(active.lastTranslationMs !== undefined
+                ? { lastTranslationMs: active.lastTranslationMs }
+                : {}),
+            ...(active.translationError
+                ? { translationError: active.translationError }
+                : {}),
+        });
     }
 
     private fail(active: ActiveCaptionSession, error: unknown): void {
@@ -325,6 +454,8 @@ export class LiveCaptionService {
         this.active = null;
         active.audio.stop();
         active.whisper.stop();
+        active.translator?.stop();
+        active.pendingTranslation = null;
         void liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
             .catch(() => undefined);
@@ -332,7 +463,7 @@ export class LiveCaptionService {
             state: 'error',
             active: false,
             generation: active.generation,
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage(error),
         });
     }
 
