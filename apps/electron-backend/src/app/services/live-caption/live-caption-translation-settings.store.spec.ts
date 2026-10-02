@@ -50,9 +50,32 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         fs.rmSync(userDataPath, { recursive: true, force: true });
     });
 
-    it('never returns the plaintext API key to renderer-facing settings', () => {
+    it('enables Google free translation without a key or model', () => {
         const publicSettings = store.update({
             enabled: true,
+            provider: 'google-free',
+            targetLanguage: 'Simplified Chinese',
+        });
+
+        expect(publicSettings).toMatchObject({
+            enabled: true,
+            provider: 'google-free',
+            baseUrl: 'https://translate.googleapis.com',
+            model: '',
+            hasApiKey: false,
+        });
+        expect(store.resolveForSession()).toMatchObject({
+            enabled: true,
+            provider: 'google-free',
+            baseUrl: 'https://translate.googleapis.com',
+            targetLanguage: 'Simplified Chinese',
+        });
+    });
+
+    it('never returns the plaintext OpenAI-compatible API key to renderer-facing settings', () => {
+        const publicSettings = store.update({
+            enabled: true,
+            provider: 'openai-compatible',
             baseUrl: 'https://example.test/v1',
             model: 'translation-model',
             apiKey: 'top-secret',
@@ -72,9 +95,10 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         );
     });
 
-    it('decrypts the key only for main-process session resolution', () => {
+    it('decrypts the key only for main-process OpenAI-compatible session resolution', () => {
         store.update({
             enabled: true,
+            provider: 'openai-compatible',
             baseUrl: 'https://example.test/v1',
             model: 'translation-model',
             targetLanguage: 'Simplified Chinese',
@@ -91,24 +115,26 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         });
     });
 
-    it('rejects enabled translation until both model and key are configured', () => {
-        expect(() => store.update({ enabled: true })).toThrow(
-            'Translation model is required before enabling.'
-        );
+    it('rejects enabled OpenAI-compatible translation until both model and key are configured', () => {
         expect(() =>
-            store.update({ enabled: true, model: 'translation-model' })
+            store.update({
+                enabled: true,
+                provider: 'openai-compatible',
+            })
+        ).toThrow('Translation model is required before enabling.');
+        expect(() =>
+            store.update({
+                enabled: true,
+                provider: 'openai-compatible',
+                model: 'translation-model',
+            })
         ).toThrow('Translation API key is required before enabling.');
-
-        expect(store.getPublicSettings()).toMatchObject({
-            enabled: false,
-            hasApiKey: false,
-            model: '',
-        });
     });
 
-    it('rejects an enabled endpoint change without a replacement key atomically', () => {
+    it('rejects an enabled OpenAI-compatible endpoint change without a replacement key atomically', () => {
         store.update({
             enabled: true,
+            provider: 'openai-compatible',
             baseUrl: 'https://first.example/v1',
             model: 'translation-model',
             apiKey: 'first-secret',
@@ -125,9 +151,10 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         });
     });
 
-    it('drops an old key when a disabled configuration changes endpoint', () => {
+    it('drops an old key when a disabled keyed configuration changes endpoint', () => {
         store.update({
             enabled: true,
+            provider: 'openai-compatible',
             baseUrl: 'https://first.example/v1',
             model: 'translation-model',
             apiKey: 'first-secret',
@@ -146,9 +173,10 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         expect(store.resolveForSession()).toBeUndefined();
     });
 
-    it('accepts a new key atomically with an endpoint change', () => {
+    it('accepts a new key atomically with an OpenAI-compatible endpoint change', () => {
         store.update({
             enabled: true,
+            provider: 'openai-compatible',
             baseUrl: 'https://first.example/v1',
             model: 'translation-model',
             apiKey: 'first-secret',
@@ -166,7 +194,7 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         });
     });
 
-    it('normalizes incomplete enabled metadata to disabled', () => {
+    it('normalizes incomplete enabled OpenAI-compatible metadata to disabled', () => {
         fs.writeFileSync(
             path.join(userDataPath, 'live-caption-translation.json'),
             `${JSON.stringify({
@@ -182,13 +210,14 @@ describe('LiveCaptionTranslationSettingsStore', () => {
 
         expect(store.getPublicSettings()).toMatchObject({
             enabled: false,
+            provider: 'openai-compatible',
             hasApiKey: false,
             model: 'translation-model',
         });
         expect(store.resolveForSession()).toBeUndefined();
     });
 
-    it('falls back to translation disabled for corrupt persisted metadata', () => {
+    it('falls back to Google translation disabled for corrupt persisted metadata', () => {
         fs.writeFileSync(
             path.join(userDataPath, 'live-caption-translation.json'),
             '{not-json',
@@ -197,18 +226,20 @@ describe('LiveCaptionTranslationSettingsStore', () => {
 
         expect(store.getPublicSettings()).toMatchObject({
             enabled: false,
+            provider: 'google-free',
             hasApiKey: false,
-            baseUrl: 'https://api.openai.com/v1',
+            baseUrl: 'https://translate.googleapis.com',
         });
         expect(store.resolveForSession()).toBeUndefined();
     });
 
-    it('does not save a key when secure storage is unavailable', () => {
+    it('does not save an OpenAI-compatible key when secure storage is unavailable', () => {
         electron.safeStorage.isEncryptionAvailable.mockReturnValue(false);
 
         expect(() =>
             store.update({
                 enabled: true,
+                provider: 'openai-compatible',
                 model: 'translation-model',
                 apiKey: 'top-secret',
             })
