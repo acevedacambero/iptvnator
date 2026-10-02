@@ -153,6 +153,11 @@ $builderOriginal = [IO.File]::ReadAllText($builderPath)
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 try {
+    # Nx's interactive TUI can remain open after every task is green, which
+    # blocks the rest of this unattended smoke harness until a key is pressed.
+    # Keep normal task output, but force the non-interactive lifecycle here.
+    $env:NX_TUI = 'false'
+
     Write-Step "Windows P0 environment (build $buildNumber, Node $nodeArch)"
 
     if (-not $SkipInstall) {
