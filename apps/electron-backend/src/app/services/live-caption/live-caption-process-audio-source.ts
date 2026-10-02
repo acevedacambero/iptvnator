@@ -10,6 +10,15 @@ export interface LiveCaptionPcmFormat {
 
 export type LiveCaptionAudioSourceEvent =
     | { type: 'ready'; format: LiveCaptionPcmFormat; targetPid: number }
+    | {
+          type: 'clock';
+          /** QPC timestamp of the end of the reported packet, in 100 ns units. */
+          qpcEnd100ns: number;
+          /** WASAPI endpoint device position at the end of the packet. */
+          devicePositionEndFrames: number;
+          /** PCM frames written to stdout since this capture session started. */
+          capturedFrames: number;
+      }
     | { type: 'unsupported'; build: number; minimumBuild: number }
     | { type: 'error'; stage: string; message: string }
     | { type: 'closed'; code: number | null; signal: NodeJS.Signals | null };
@@ -25,6 +34,9 @@ interface HelperStatusMessage {
     channels?: number;
     format?: string;
     targetPid?: number;
+    qpcEnd100ns?: number;
+    devicePositionEndFrames?: number;
+    capturedFrames?: number;
     build?: number;
     minimumBuild?: number;
     stage?: string;
@@ -39,6 +51,11 @@ type CaptionHelperProcess = ChildProcessByStdio<null, Readable, Readable>;
  * 16 kHz mono signed-16 PCM. The helper targets the Electron main process,
  * where Windows native-view libmpv renders audio, and includes its process
  * tree as required by the Windows process-loopback API.
+ *
+ * Timing metadata is emitted separately on stderr so the PCM byte stream stays
+ * backward-compatible with the existing rolling ASR window. The clock event is
+ * measurement-only: it lets AISyncController correlate WASAPI QPC with MPV PTS
+ * before any playback buffering is introduced.
  */
 export class LiveCaptionProcessAudioSource {
     private child: CaptionHelperProcess | null = null;
@@ -157,6 +174,27 @@ export class LiveCaptionProcessAudioSource {
                     format: 's16le',
                 },
                 targetPid: message.targetPid,
+            });
+            return;
+        }
+
+        if (
+            message.event === 'clock' &&
+            typeof message.qpcEnd100ns === 'number' &&
+            Number.isFinite(message.qpcEnd100ns) &&
+            message.qpcEnd100ns > 0 &&
+            typeof message.devicePositionEndFrames === 'number' &&
+            Number.isFinite(message.devicePositionEndFrames) &&
+            message.devicePositionEndFrames >= 0 &&
+            typeof message.capturedFrames === 'number' &&
+            Number.isFinite(message.capturedFrames) &&
+            message.capturedFrames >= 0
+        ) {
+            callbacks.onEvent?.({
+                type: 'clock',
+                qpcEnd100ns: message.qpcEnd100ns,
+                devicePositionEndFrames: message.devicePositionEndFrames,
+                capturedFrames: message.capturedFrames,
             });
             return;
         }
