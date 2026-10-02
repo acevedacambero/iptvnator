@@ -116,8 +116,28 @@ export class LiveCaptionService {
         options: LiveCaptionStartOptions = {}
     ): Promise<LiveCaptionState> {
         const support = this.getSupport();
-        if (!support.supported && !options.modelPath) {
-            throw new Error(support.reason ?? 'AI live captions are unavailable.');
+        if (process.platform !== 'win32') {
+            throw new Error('AI live captions V1 are available on Windows only.');
+        }
+        if (!support.processLoopbackAvailable) {
+            throw new Error(
+                `Process loopback audio capture requires Windows build ${MIN_PROCESS_LOOPBACK_BUILD} or newer.`
+            );
+        }
+        if (!support.captureHelperAvailable) {
+            throw new Error(
+                'The live-caption audio helper is missing from this build.'
+            );
+        }
+        if (!support.whisperHelperAvailable) {
+            throw new Error(
+                'The Whisper live-caption helper is missing from this build.'
+            );
+        }
+        if (!resolveLiveCaptionWhisperModelPath(options.modelPath)) {
+            throw new Error(
+                'No Whisper model is configured. Set IPTVNATOR_WHISPER_MODEL or place ggml-small.en.bin under the IPTVnator user-data models/whisper directory.'
+            );
         }
         if (!sessionId.trim()) {
             throw new Error('Embedded MPV session id is required.');
@@ -219,7 +239,10 @@ export class LiveCaptionService {
             return;
         }
         if (event.type === 'closed') {
-            this.fail(active, new Error('Live-caption audio capture stopped unexpectedly.'));
+            this.fail(
+                active,
+                new Error('Live-caption audio capture stopped unexpectedly.')
+            );
         }
     }
 
