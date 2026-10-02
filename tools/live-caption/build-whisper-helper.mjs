@@ -12,6 +12,7 @@ const sourceRoot = path.join(
     'whisper.cpp'
 );
 const stampPath = path.join(sourceRoot, 'iptvnator-source-revision.json');
+const sourceLicensePath = path.join(sourceRoot, 'LICENSE');
 const helperSourceRoot = path.join(
     workspaceRoot,
     'apps',
@@ -36,6 +37,7 @@ const outputDir = path.join(
     'Release'
 );
 const outputFile = path.join(outputDir, 'iptvnator_whisper_helper.exe');
+const outputLicenseFile = path.join(outputDir, 'LICENSE.whisper.cpp.txt');
 
 function isTruthy(value) {
     return ['1', 'true', 'yes', 'on'].includes(
@@ -93,7 +95,8 @@ function validatePinnedSource() {
         stamp?.commit === WHISPER_CPP_SOURCE.commit &&
         fs.existsSync(path.join(sourceRoot, 'CMakeLists.txt')) &&
         fs.existsSync(path.join(sourceRoot, 'include', 'whisper.h')) &&
-        fs.existsSync(path.join(sourceRoot, 'ggml', 'CMakeLists.txt'))
+        fs.existsSync(path.join(sourceRoot, 'ggml', 'CMakeLists.txt')) &&
+        fs.existsSync(sourceLicensePath)
     );
 }
 
@@ -104,13 +107,14 @@ function stagePinnedSourceIfRequired() {
     run(process.execPath, ['tools/live-caption/stage-whisper-source.mjs']);
     if (!validatePinnedSource()) {
         throw new Error(
-            `Pinned whisper.cpp ${WHISPER_CPP_SOURCE.tag} source staging completed without a valid revision stamp.`
+            `Pinned whisper.cpp ${WHISPER_CPP_SOURCE.tag} source staging completed without a valid revision stamp or LICENSE.`
         );
     }
 }
 
 function main() {
     fs.rmSync(outputFile, { force: true });
+    fs.rmSync(outputLicenseFile, { force: true });
     if (process.platform !== 'win32' || process.arch !== 'x64') {
         if (required) {
             throw new Error(
@@ -168,10 +172,20 @@ function main() {
         );
     }
     fs.copyFileSync(builtHelper, outputFile);
+    fs.copyFileSync(sourceLicensePath, outputLicenseFile);
     if (!fs.statSync(outputFile).isFile() || fs.statSync(outputFile).size === 0) {
         throw new Error(`Whisper helper output is invalid: ${outputFile}`);
     }
+    if (
+        !fs.statSync(outputLicenseFile).isFile() ||
+        fs.statSync(outputLicenseFile).size === 0
+    ) {
+        throw new Error(
+            `Whisper helper license output is invalid: ${outputLicenseFile}`
+        );
+    }
     log(`Built ${path.relative(workspaceRoot, outputFile)}.`);
+    log(`Packaged ${path.relative(workspaceRoot, outputLicenseFile)}.`);
 }
 
 try {
