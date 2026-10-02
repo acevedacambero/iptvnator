@@ -38,10 +38,40 @@ export interface LiveCaptionTranslationOptions {
     timeoutMs?: number;
 }
 
+/** Renderer-safe view of the persistent translation configuration. */
+export interface LiveCaptionTranslationSettings {
+    enabled: boolean;
+    provider: LiveCaptionTranslationProvider;
+    baseUrl: string;
+    model: string;
+    targetLanguage: string;
+    hasApiKey: boolean;
+    /** Whether Electron can encrypt/decrypt the credential on this machine. */
+    encryptionAvailable: boolean;
+}
+
+/**
+ * Patch accepted by the dedicated secure settings IPC. The API key is write
+ * only: renderer reads expose only `hasApiKey`, never the decrypted secret.
+ */
+export interface LiveCaptionTranslationSettingsUpdate {
+    enabled?: boolean;
+    provider?: LiveCaptionTranslationProvider;
+    baseUrl?: string;
+    model?: string;
+    targetLanguage?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+}
+
 export interface LiveCaptionStartOptions {
     /** Optional absolute path; V1 UI normally relies on the configured model. */
     modelPath?: string;
     threads?: number;
+    /**
+     * Optional per-session override used by tests/integrations. Normal desktop
+     * UI relies on the main-process encrypted translation settings instead.
+     */
     translation?: LiveCaptionTranslationOptions;
 }
 
