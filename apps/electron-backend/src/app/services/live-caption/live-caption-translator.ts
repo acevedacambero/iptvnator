@@ -1,3 +1,4 @@
+import { net } from 'electron';
 import type {
     LiveCaptionTranslationOptions,
     LiveCaptionTranslationProvider,
@@ -5,6 +6,7 @@ import type {
 
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_GOOGLE_API_BASE_URL = 'https://translate.googleapis.com';
+const GOOGLE_FALLBACK_API_BASE_URL = 'https://translate.google.com';
 const DEFAULT_TARGET_LANGUAGE = 'Simplified Chinese';
 const DEFAULT_TIMEOUT_MS = 8000;
 const MIN_TIMEOUT_MS = 1000;
@@ -127,6 +129,35 @@ function googleTargetLanguageCode(value: string): string {
     return 'zh-CN';
 }
 
+async function appFetch(input: string, init: RequestInit): Promise<Response> {
+    // Node's global fetch does not reliably follow Electron/Chromium proxy
+    // configuration on Windows. Live IPTV users commonly run the desktop app
+    // behind a system proxy, so translations must use Electron's network stack
+    // whenever we are actually running inside Electron.
+    if (
+        process.versions.electron &&
+        net &&
+        typeof net.fetch === 'function'
+    ) {
+        return net.fetch(input, init) as Promise<Response>;
+    }
+    return fetch(input, init);
+}
+
+function googleRequestUrl(
+    baseUrl: string,
+    targetLanguage: string,
+    text: string
+): string {
+    const url = new URL(`${baseUrl}/translate_a/single`);
+    url.searchParams.set('client', 'gtx');
+    url.searchParams.set('sl', 'en');
+    url.searchParams.set('tl', googleTargetLanguageCode(targetLanguage));
+    url.searchParams.set('dt', 't');
+    url.searchParams.set('q', text);
+    return url.toString();
+}
+
 /**
  * One-at-a-time translator for live captions.
  *
@@ -239,34 +270,57 @@ export class LiveCaptionTranslator {
         text: string,
         signal: AbortSignal
     ): Promise<string> {
-        const url = new URL(`${this.baseUrl}/translate_a/single`);
-        url.searchParams.set('client', 'gtx');
-        url.searchParams.set('sl', 'en');
-        url.searchParams.set(
-            'tl',
-            googleTargetLanguageCode(this.targetLanguage)
-        );
-        url.searchParams.set('dt', 't');
-        url.searchParams.set('q', text);
-
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-            signal,
-        });
-        if (!response.ok) {
-            throw new Error(
-                `Google translation request failed with HTTP ${response.status}.`
-            );
+        const candidates = [this.baseUrl];
+        if (this.baseUrl === DEFAULT_GOOGLE_API_BASE_URL) {
+            candidates.push(GOOGLE_FALLBACK_API_BASE_URL);
         }
-        return readGoogleTranslation(await response.json());
+
+        let lastError: Error | null = null;
+        for (const baseUrl of candidates) {
+            try {
+                const response = await appFetch(
+                    googleRequestUrl(baseUrl, this.targetLanguage, text),
+                    {
+                        method: 'GET',
+                        headers: {
+                            Accept: 'application/json,text/plain,*/*',
+                        },
+                        signal,
+                    }
+                );
+                if (!response.ok) {
+                    lastError = new Error(
+                        `Google translation request failed with HTTP ${response.status}.`
+                    );
+                    continue;
+                }
+                const translated = readGoogleTranslation(await response.json());
+                if (translated) {
+                    return translated;
+                }
+                lastError = new Error(
+                    'Google translation returned an empty response.'
+                );
+            } catch (error) {
+                if (signal.aborted) {
+                    throw error;
+                }
+                lastError =
+                    error instanceof Error ? error : new Error(String(error));
+            }
+        }
+
+        throw (
+            lastError ??
+            new Error('Google translation request failed for all endpoints.')
+        );
     }
 
     private async translateWithOpenAi(
         text: string,
         signal: AbortSignal
     ): Promise<string> {
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        const response = await appFetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${this.apiKey}`,
