@@ -47,9 +47,6 @@ function isTruthy(value) {
     );
 }
 
-// Existing official Windows builds already require the Embedded MPV runtime.
-// Unless explicitly overridden, use that same gate for the caption helper so
-// release/PR artifacts cannot silently ship the button without its ASR worker.
 const explicitRequirement = process.env.IPTVNATOR_REQUIRE_LIVE_CAPTIONS;
 const required =
     explicitRequirement === undefined
@@ -62,11 +59,11 @@ function log(message) {
     process.stdout.write(`[live-caption] ${message}\n`);
 }
 
-function run(command, args) {
+function run(command, args, env = process.env) {
     log(`${command} ${args.join(' ')}`);
     const result = spawnSync(command, args, {
         cwd: workspaceRoot,
-        env: process.env,
+        env,
         stdio: 'inherit',
     });
     if (result.error) {
@@ -79,10 +76,10 @@ function run(command, args) {
     }
 }
 
-function runCapture(command, args) {
+function runCapture(command, args, env = process.env) {
     const result = spawnSync(command, args, {
         cwd: workspaceRoot,
-        env: process.env,
+        env,
         encoding: 'utf8',
     });
     if (result.error) {
@@ -114,7 +111,7 @@ function findVsWhere() {
     return fs.existsSync(candidate) ? candidate : undefined;
 }
 
-function resolveVisualStudioGenerator() {
+function getVisualStudioInfo() {
     const vswhere = findVsWhere();
     if (!vswhere) {
         throw new Error(
@@ -131,41 +128,117 @@ function resolveVisualStudioGenerator() {
         '-property',
         'installationVersion',
     ]);
+    const installationPath = runCapture(vswhere, [
+        '-latest',
+        '-products',
+        '*',
+        '-requires',
+        'Microsoft.VisualStudio.Workload.VCTools',
+        '-property',
+        'installationPath',
+    ]);
     const major = Number.parseInt(version.split('.')[0] ?? '', 10);
-    if (!Number.isFinite(major)) {
+    if (!Number.isFinite(major) || !installationPath) {
         throw new Error(
-            `Unable to determine the installed Visual Studio version from vswhere output: ${version || '(empty)'}.`
+            `Unable to determine the installed Visual Studio C++ toolchain from vswhere output (version=${version || '(empty)'}, path=${installationPath || '(empty)'}).`
         );
     }
-
-    const generator =
-        major >= 18
-            ? 'Visual Studio 18 2026'
-            : major >= 17
-              ? 'Visual Studio 17 2022'
-              : undefined;
-    if (!generator) {
+    if (major < 17) {
         throw new Error(
             `Visual Studio ${version} is too old. Visual Studio 2022 or newer is required.`
         );
     }
+    return { version, installationPath, major };
+}
 
-    const cmakeHelp = runCapture('cmake', ['--help']);
-    if (!cmakeHelp.includes(generator)) {
-        const versionText = runCapture('cmake', ['--version'])
-            .split(/\r?\n/)[0]
-            .trim();
-        const requirement =
-            major >= 18
-                ? 'CMake 4.2 or newer is required for the Visual Studio 18 2026 generator.'
-                : 'Install a CMake build that supports the Visual Studio 17 2022 generator.';
+function loadVisualStudioDeveloperEnvironment(installationPath) {
+    const vsDevCmd = path.join(
+        installationPath,
+        'Common7',
+        'Tools',
+        'VsDevCmd.bat'
+    );
+    if (!fs.existsSync(vsDevCmd)) {
         throw new Error(
-            `${generator} is installed, but ${versionText || 'the current CMake'} does not provide that generator. ${requirement}`
+            `Visual Studio developer environment script was not found: ${vsDevCmd}`
         );
     }
 
-    log(`Using ${generator} for Visual Studio ${version}.`);
-    return generator;
+    const comSpec = process.env.ComSpec || 'cmd.exe';
+    const commandLine = `call "${vsDevCmd}" -arch=x64 -host_arch=x64 >nul && set`;
+    const result = spawnSync(comSpec, ['/d', '/s', '/c', commandLine], {
+        cwd: workspaceRoot,
+        env: process.env,
+        encoding: 'utf8',
+    });
+    if (result.error) {
+        throw result.error;
+    }
+    if (result.status !== 0) {
+        throw new Error(
+            `Failed to initialize the Visual Studio x64 developer environment with status ${result.status ?? 1}.`
+        );
+    }
+
+    const env = {};
+    for (const rawLine of String(result.stdout ?? '').split(/\r?\n/)) {
+        const separator = rawLine.indexOf('=');
+        if (separator <= 0) {
+            continue;
+        }
+        env[rawLine.slice(0, separator)] = rawLine.slice(separator + 1);
+    }
+    if (!env.VSCMD_VER) {
+        throw new Error(
+            'Visual Studio developer environment initialized without VSCMD_VER.'
+        );
+    }
+    return env;
+}
+
+function resolveBuildStrategy() {
+    const visualStudio = getVisualStudioInfo();
+    const cmakeHelp = runCapture('cmake', ['--help']);
+    const preferredGenerator =
+        visualStudio.major >= 18
+            ? 'Visual Studio 18 2026'
+            : 'Visual Studio 17 2022';
+
+    if (cmakeHelp.includes(preferredGenerator)) {
+        log(
+            `Using ${preferredGenerator} for Visual Studio ${visualStudio.version}.`
+        );
+        return {
+            generator: preferredGenerator,
+            env: process.env,
+            multiConfig: true,
+        };
+    }
+
+    if (!cmakeHelp.includes('NMake Makefiles')) {
+        const versionText = runCapture('cmake', ['--version'])
+            .split(/\r?\n/)[0]
+            .trim();
+        throw new Error(
+            `${preferredGenerator} is not available in ${versionText || 'the current CMake'}, and the NMake Makefiles fallback is also unavailable.`
+        );
+    }
+
+    const devEnv = loadVisualStudioDeveloperEnvironment(
+        visualStudio.installationPath
+    );
+    const whereNMake = runCapture('where.exe', ['nmake.exe'], devEnv);
+    const whereCl = runCapture('where.exe', ['cl.exe'], devEnv);
+    log(
+        `CMake does not provide ${preferredGenerator}; using NMake Makefiles with Visual Studio ${visualStudio.version}.`
+    );
+    log(`MSVC compiler: ${whereCl.split(/\r?\n/)[0]}`);
+    log(`NMake: ${whereNMake.split(/\r?\n/)[0]}`);
+    return {
+        generator: 'NMake Makefiles',
+        env: devEnv,
+        multiConfig: false,
+    };
 }
 
 function validatePinnedSource() {
@@ -229,27 +302,36 @@ function main() {
     fs.mkdirSync(buildRoot, { recursive: true });
     fs.mkdirSync(outputDir, { recursive: true });
 
-    const generator = resolveVisualStudioGenerator();
-    run('cmake', [
+    const strategy = resolveBuildStrategy();
+    const configureArgs = [
         '-S',
         helperSourceRoot,
         '-B',
         buildRoot,
         '-G',
-        generator,
-        '-A',
-        'x64',
-        `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\', '/')}`,
-    ]);
-    run('cmake', [
+        strategy.generator,
+    ];
+    if (strategy.multiConfig) {
+        configureArgs.push('-A', 'x64');
+    } else {
+        configureArgs.push('-DCMAKE_BUILD_TYPE=Release');
+    }
+    configureArgs.push(
+        `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\', '/')}`
+    );
+    run('cmake', configureArgs, strategy.env);
+
+    const buildArgs = [
         '--build',
         buildRoot,
-        '--config',
-        'Release',
         '--target',
         'iptvnator_whisper_helper',
         '--parallel',
-    ]);
+    ];
+    if (strategy.multiConfig) {
+        buildArgs.splice(2, 0, '--config', 'Release');
+    }
+    run('cmake', buildArgs, strategy.env);
 
     const builtHelper = path.join(
         buildRoot,
