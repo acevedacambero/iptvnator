@@ -3,31 +3,39 @@ import path from 'node:path';
 import { app, safeStorage } from 'electron';
 import type {
     LiveCaptionTranslationOptions,
+    LiveCaptionTranslationProvider,
     LiveCaptionTranslationSettings,
     LiveCaptionTranslationSettingsUpdate,
 } from '@iptvnator/shared/interfaces';
 import { normalizeLiveCaptionTranslationBaseUrl } from './live-caption-translator';
 
 const FILE_NAME = 'live-caption-translation.json';
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_GOOGLE_BASE_URL = 'https://translate.googleapis.com';
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_TARGET_LANGUAGE = 'Simplified Chinese';
 
 interface PersistedLiveCaptionTranslationSettings {
     version: 1;
     enabled: boolean;
-    provider: 'openai-compatible';
+    provider: LiveCaptionTranslationProvider;
     baseUrl: string;
     model: string;
     targetLanguage: string;
     encryptedApiKey?: string;
 }
 
+function defaultBaseUrl(provider: LiveCaptionTranslationProvider): string {
+    return provider === 'google-free'
+        ? DEFAULT_GOOGLE_BASE_URL
+        : DEFAULT_OPENAI_BASE_URL;
+}
+
 function defaults(): PersistedLiveCaptionTranslationSettings {
     return {
         version: 1,
         enabled: false,
-        provider: 'openai-compatible',
-        baseUrl: DEFAULT_BASE_URL,
+        provider: 'google-free',
+        baseUrl: DEFAULT_GOOGLE_BASE_URL,
         model: '',
         targetLanguage: DEFAULT_TARGET_LANGUAGE,
     };
@@ -35,6 +43,10 @@ function defaults(): PersistedLiveCaptionTranslationSettings {
 
 function cleanString(value: unknown, fallback = ''): string {
     return typeof value === 'string' ? value.trim() : fallback;
+}
+
+function normalizeProvider(value: unknown): LiveCaptionTranslationProvider {
+    return value === 'openai-compatible' ? 'openai-compatible' : 'google-free';
 }
 
 function normalizePersisted(
@@ -45,36 +57,39 @@ function normalizePersisted(
         return fallback;
     }
     const raw = value as Partial<PersistedLiveCaptionTranslationSettings>;
-    let baseUrl = fallback.baseUrl;
+    const provider = normalizeProvider(raw.provider);
+    let baseUrl = defaultBaseUrl(provider);
     try {
         baseUrl = normalizeLiveCaptionTranslationBaseUrl(
-            cleanString(raw.baseUrl, fallback.baseUrl)
+            cleanString(raw.baseUrl, defaultBaseUrl(provider)),
+            provider
         );
     } catch {
-        // Invalid persisted endpoints are reset to the safe default. The key is
-        // also omitted below so it can never be sent to a substituted origin.
         return {
             ...fallback,
             enabled: false,
+            provider,
+            baseUrl: defaultBaseUrl(provider),
             model: cleanString(raw.model),
             targetLanguage:
                 cleanString(raw.targetLanguage, fallback.targetLanguage) ||
                 fallback.targetLanguage,
         };
     }
+
     const model = cleanString(raw.model);
     const encryptedApiKey =
         typeof raw.encryptedApiKey === 'string' && raw.encryptedApiKey
             ? raw.encryptedApiKey
             : undefined;
-    // Older/hand-edited metadata may claim translation is enabled without a
-    // usable provider configuration. Normalize it to disabled so startup does
-    // not repeatedly surface a non-fatal configuration error on every session.
-    const enabled = raw.enabled === true && Boolean(model && encryptedApiKey);
+    const enabled =
+        raw.enabled === true &&
+        (provider === 'google-free' || Boolean(model && encryptedApiKey));
+
     return {
         version: 1,
         enabled,
-        provider: 'openai-compatible',
+        provider,
         baseUrl,
         model,
         targetLanguage:
@@ -87,10 +102,10 @@ function normalizePersisted(
 /**
  * Dedicated persistent store for live-caption translation.
  *
- * The API key is encrypted using Electron safeStorage (DPAPI on Windows) and
- * never returned to renderer code. This file is intentionally separate from
- * the ordinary Settings object so credentials do not enter settings backup,
- * IndexedDB or the broad renderer->main settings mirror.
+ * Google free translation needs no credential. OpenAI-compatible API keys are
+ * encrypted using Electron safeStorage (DPAPI on Windows) and never returned
+ * to renderer code. This file stays separate from ordinary Settings so a key
+ * never enters settings backup, IndexedDB or the broad renderer->main mirror.
  */
 export class LiveCaptionTranslationSettingsStore {
     getPublicSettings(): LiveCaptionTranslationSettings {
@@ -110,21 +125,35 @@ export class LiveCaptionTranslationSettingsStore {
         patch: LiveCaptionTranslationSettingsUpdate
     ): LiveCaptionTranslationSettings {
         const current = this.read();
-        const nextBaseUrl =
+        const nextProvider =
+            patch.provider === undefined
+                ? current.provider
+                : normalizeProvider(patch.provider);
+        const providerChanged = nextProvider !== current.provider;
+        const requestedBaseUrl =
             patch.baseUrl === undefined
-                ? current.baseUrl
-                : normalizeLiveCaptionTranslationBaseUrl(patch.baseUrl);
+                ? providerChanged
+                    ? defaultBaseUrl(nextProvider)
+                    : current.baseUrl
+                : patch.baseUrl;
+        const nextBaseUrl = normalizeLiveCaptionTranslationBaseUrl(
+            requestedBaseUrl,
+            nextProvider
+        );
+
         const next: PersistedLiveCaptionTranslationSettings = {
             ...current,
             enabled:
                 typeof patch.enabled === 'boolean'
                     ? patch.enabled
                     : current.enabled,
-            provider: 'openai-compatible',
+            provider: nextProvider,
             baseUrl: nextBaseUrl,
             model:
                 patch.model === undefined
-                    ? current.model
+                    ? providerChanged && nextProvider === 'google-free'
+                        ? ''
+                        : current.model
                     : cleanString(patch.model),
             targetLanguage:
                 patch.targetLanguage === undefined
@@ -133,10 +162,12 @@ export class LiveCaptionTranslationSettingsStore {
                       DEFAULT_TARGET_LANGUAGE,
         };
 
-        // A credential is origin-bound. Never reuse an existing secret after
-        // the renderer changes the provider endpoint; require the user to
-        // enter the key again for that endpoint.
-        if (nextBaseUrl !== current.baseUrl && patch.apiKey === undefined) {
+        // Keyed credentials are endpoint/provider-bound. Never silently reuse
+        // one after changing either value.
+        if (
+            (providerChanged || nextBaseUrl !== current.baseUrl) &&
+            patch.apiKey === undefined
+        ) {
             delete next.encryptedApiKey;
         }
         if (patch.clearApiKey === true) {
@@ -161,11 +192,7 @@ export class LiveCaptionTranslationSettingsStore {
             }
         }
 
-        // Persist enabled=true only when the configuration can actually be
-        // used. This also makes an endpoint change without a replacement key
-        // fail atomically: the old endpoint/key pair stays intact until the
-        // user supplies credentials for the new endpoint.
-        if (next.enabled) {
+        if (next.enabled && next.provider === 'openai-compatible') {
             if (!next.model) {
                 throw new Error('Translation model is required before enabling.');
             }
@@ -189,6 +216,16 @@ export class LiveCaptionTranslationSettingsStore {
         if (!current.enabled) {
             return undefined;
         }
+
+        if (current.provider === 'google-free') {
+            return {
+                enabled: true,
+                provider: 'google-free',
+                baseUrl: current.baseUrl,
+                targetLanguage: current.targetLanguage,
+            };
+        }
+
         if (!current.encryptedApiKey) {
             return undefined;
         }
@@ -232,8 +269,6 @@ export class LiveCaptionTranslationSettingsStore {
             ) {
                 return defaults();
             }
-            // Corrupt/non-readable credential metadata must not crash caption
-            // startup. Fall back to translation disabled and keep source ASR.
             return defaults();
         }
     }
@@ -247,8 +282,6 @@ export class LiveCaptionTranslationSettingsStore {
             encoding: 'utf8',
             mode: 0o600,
         });
-        // On Windows rename-over-existing can fail. Replace the tiny metadata
-        // file explicitly; the credential itself remains DPAPI-encrypted.
         fs.rmSync(filePath, { force: true });
         fs.renameSync(tempPath, filePath);
     }
