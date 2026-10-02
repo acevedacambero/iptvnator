@@ -24,6 +24,7 @@
         <div class="setting-item__control live-caption-translation-fields">
             <mat-checkbox
                 [(ngModel)]="enabled"
+                [ngModelOptions]="{ standalone: true }"
                 [disabled]="loading || saving"
                 data-test-id="live-caption-translation-toggle"
             >
@@ -36,6 +37,7 @@
                     matInput
                     type="url"
                     [(ngModel)]="baseUrl"
+                    [ngModelOptions]="{ standalone: true }"
                     [disabled]="loading || saving"
                     autocomplete="off"
                     spellcheck="false"
@@ -49,6 +51,7 @@
                     matInput
                     type="text"
                     [(ngModel)]="model"
+                    [ngModelOptions]="{ standalone: true }"
                     [disabled]="loading || saving"
                     autocomplete="off"
                     spellcheck="false"
@@ -62,6 +65,7 @@
                     matInput
                     type="text"
                     [(ngModel)]="targetLanguage"
+                    [ngModelOptions]="{ standalone: true }"
                     [disabled]="loading || saving"
                     autocomplete="off"
                     spellcheck="false"
@@ -74,10 +78,15 @@
                     matInput
                     type="password"
                     [(ngModel)]="apiKey"
+                    [ngModelOptions]="{ standalone: true }"
                     [disabled]="loading || saving || !encryptionAvailable"
                     autocomplete="new-password"
                     spellcheck="false"
-                    placeholder="{{ hasApiKey ? 'Saved securely — leave blank to keep it' : 'Enter API key' }}"
+                    [placeholder]="
+                        hasApiKey
+                            ? 'Saved securely — leave blank to keep it'
+                            : 'Enter API key'
+                    "
                 />
                 <mat-hint>
                     The key is write-only in the UI and encrypted by Electron
