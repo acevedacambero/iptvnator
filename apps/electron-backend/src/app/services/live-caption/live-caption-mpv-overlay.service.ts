@@ -64,6 +64,25 @@ export class LiveCaptionMpvOverlayService {
         });
     }
 
+    /**
+     * Narrow read-only clock probe used by AISyncController. Keeping the MPV
+     * query here preserves the security boundary: renderer code still never
+     * receives access to the general JSON-IPC pipe.
+     */
+    async getPlaybackPositionSeconds(sessionId: string): Promise<number | null> {
+        const runtime = this.sessions.get(sessionId);
+        if (!runtime) {
+            return null;
+        }
+        const value = await this.getClient(runtime).command({
+            _name: 'get_property',
+            name: 'time-pos',
+        });
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0
+            ? value
+            : null;
+    }
+
     async clearOverlay(sessionId: string): Promise<void> {
         const runtime = this.sessions.get(sessionId);
         if (!runtime) {
