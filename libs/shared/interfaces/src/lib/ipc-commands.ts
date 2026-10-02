@@ -84,6 +84,11 @@ export const EMBEDDED_MPV_SET_AI_CAPTION_OVERLAY =
     'EMBEDDED_MPV_SET_AI_CAPTION_OVERLAY';
 export const EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY =
     'EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY';
+export const LIVE_CAPTION_GET_SUPPORT = 'LIVE_CAPTION_GET_SUPPORT';
+export const LIVE_CAPTION_GET_STATE = 'LIVE_CAPTION_GET_STATE';
+export const LIVE_CAPTION_START = 'LIVE_CAPTION_START';
+export const LIVE_CAPTION_STOP = 'LIVE_CAPTION_STOP';
+export const LIVE_CAPTION_STATE_CHANGED = 'LIVE_CAPTION_STATE_CHANGED';
 export const EMBEDDED_MPV_SET_SPEED = 'EMBEDDED_MPV_SET_SPEED';
 export const EMBEDDED_MPV_SET_ASPECT = 'EMBEDDED_MPV_SET_ASPECT';
 export const EMBEDDED_MPV_START_RECORDING = 'EMBEDDED_MPV_START_RECORDING';
@@ -110,10 +115,8 @@ export const STALKER_RESPONSE = 'STALKER_RESPONSE';
 export const PORTAL_DEBUG_EVENT = 'PORTAL_DEBUG_EVENT';
 
 /**
- * Forgets the main process' recorded connection failures for a portal host, so
- * the next request contacts it for real. Sent whenever the user asks for a
- * fresh attempt (portal retry, "test connection") or hands over a possibly
- * different portal (endpoint discovery on import, edit, or lazy repair).
+ * Forgets the connection failures recorded for the host `url` points at, so
+ * the next request contacts it for real instead of being fast-failed.
  */
 export const CONNECTIVITY_GUARD_RESET = 'CONNECTIVITY_GUARD_RESET';
 
