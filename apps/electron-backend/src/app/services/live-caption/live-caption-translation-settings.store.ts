@@ -154,6 +154,24 @@ export class LiveCaptionTranslationSettingsStore {
             }
         }
 
+        // Persist enabled=true only when the configuration can actually be
+        // used. This also makes an endpoint change without a replacement key
+        // fail atomically: the old endpoint/key pair stays intact until the
+        // user supplies credentials for the new endpoint.
+        if (next.enabled) {
+            if (!next.model) {
+                throw new Error('Translation model is required before enabling.');
+            }
+            if (!next.encryptedApiKey) {
+                throw new Error('Translation API key is required before enabling.');
+            }
+            if (!safeStorage.isEncryptionAvailable()) {
+                throw new Error(
+                    'Secure credential storage is unavailable on this system.'
+                );
+            }
+        }
+
         this.write(next);
         return this.getPublicSettings();
     }
