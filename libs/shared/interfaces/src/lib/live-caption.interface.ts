@@ -79,6 +79,19 @@ export interface LiveCaptionStartOptions {
     translation?: LiveCaptionTranslationOptions;
 }
 
+/**
+ * Measurement-only sync diagnostics. V2 P0 gathers these values before any
+ * playback buffer is introduced; later adaptive-delay work uses P50/P95 rather
+ * than guessing a fixed delay.
+ */
+export interface LiveCaptionSyncTelemetry {
+    clockAnchorCount: number;
+    captionLagSampleCount: number;
+    lastCaptionLagMs?: number;
+    p50CaptionLagMs?: number;
+    p95CaptionLagMs?: number;
+}
+
 export interface LiveCaptionState {
     state: LiveCaptionRunState;
     active: boolean;
@@ -88,6 +101,7 @@ export interface LiveCaptionState {
     lastTranslatedText?: string;
     lastInferenceMs?: number;
     lastTranslationMs?: number;
+    syncTelemetry?: LiveCaptionSyncTelemetry;
     /** Non-fatal translation error; source-language captions continue. */
     translationError?: string;
     error?: string;
