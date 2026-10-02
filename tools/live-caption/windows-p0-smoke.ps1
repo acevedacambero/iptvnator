@@ -42,6 +42,15 @@ function Assert-OneFile([string[]]$Candidates, [string]$Label) {
     throw "Missing $Label. Checked: $($Candidates -join ', ')"
 }
 
+function Assert-UsageExit([string]$Path, [string]$Label) {
+    & $Path *> $null
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 64) {
+        throw "$Label did not start cleanly; expected usage exit code 64, received $exitCode ($Path)"
+    }
+    Write-Host "  OK  $Label executable starts (usage exit 64)"
+}
+
 function Get-WindowsBuildNumber {
     try {
         $currentVersion = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
@@ -132,9 +141,11 @@ try {
     Invoke-Checked 'pnpm' @('run', 'build:backend')
 
     $nativeDist = Join-Path $repoRoot 'dist\apps\electron-backend\native'
+    $captureHelper = Join-Path $nativeDist 'iptvnator_caption_helper.exe'
+    $whisperHelper = Join-Path $nativeDist 'iptvnator_whisper_helper.exe'
     Assert-File (Join-Path $nativeDist 'embedded_mpv.node') 'Embedded MPV addon'
-    Assert-File (Join-Path $nativeDist 'iptvnator_caption_helper.exe') 'WASAPI capture helper'
-    Assert-File (Join-Path $nativeDist 'iptvnator_whisper_helper.exe') 'Whisper ASR helper'
+    Assert-File $captureHelper 'WASAPI capture helper'
+    Assert-File $whisperHelper 'Whisper ASR helper'
     Assert-File (Join-Path $nativeDist 'LICENSE.whisper.cpp.txt') 'whisper.cpp license'
     Assert-File (Join-Path $repoRoot 'dist\apps\electron-backend\live-caption.preload.js') 'live-caption preload'
     Assert-OneFile @(
@@ -147,6 +158,10 @@ try {
         (Join-Path $nativeDist 'lib\mpv.dll'),
         (Join-Path $nativeDist 'lib\libmpv.dll')
     ) 'libmpv runtime' | Out-Null
+
+    Write-Step 'Probing native helper executables'
+    Assert-UsageExit $captureHelper 'WASAPI capture helper'
+    Assert-UsageExit $whisperHelper 'Whisper ASR helper'
 
     if (-not $SkipPackage) {
         Write-Step 'Temporarily constraining electron-builder Windows output to x64'
@@ -170,9 +185,13 @@ try {
         }
 
         $packageNative = Join-Path $unpackedExe.Directory.FullName 'resources\app.asar.unpacked\electron-backend\native'
-        Assert-File (Join-Path $packageNative 'iptvnator_caption_helper.exe') 'packaged WASAPI capture helper'
-        Assert-File (Join-Path $packageNative 'iptvnator_whisper_helper.exe') 'packaged Whisper ASR helper'
+        $packagedCaptureHelper = Join-Path $packageNative 'iptvnator_caption_helper.exe'
+        $packagedWhisperHelper = Join-Path $packageNative 'iptvnator_whisper_helper.exe'
+        Assert-File $packagedCaptureHelper 'packaged WASAPI capture helper'
+        Assert-File $packagedWhisperHelper 'packaged Whisper ASR helper'
         Assert-File (Join-Path $packageNative 'LICENSE.whisper.cpp.txt') 'packaged whisper.cpp license'
+        Assert-UsageExit $packagedCaptureHelper 'packaged WASAPI capture helper'
+        Assert-UsageExit $packagedWhisperHelper 'packaged Whisper ASR helper'
 
         Write-Host "`nPackaged executable: $($unpackedExe.FullName)" -ForegroundColor Green
 
