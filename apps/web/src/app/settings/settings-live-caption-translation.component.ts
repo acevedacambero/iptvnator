@@ -5,8 +5,10 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
 import type {
     LiveCaptionSupport,
+    LiveCaptionTranslationProvider,
     LiveCaptionTranslationSettings,
     LiveCaptionTranslationSettingsUpdate,
 } from '@iptvnator/shared/interfaces';
@@ -23,6 +25,9 @@ type CaptionWindow = Window & {
     liveCaptions?: Partial<LiveCaptionTranslationSettingsApi>;
 };
 
+const GOOGLE_FREE_BASE_URL = 'https://translate.googleapis.com';
+const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
 @Component({
     selector: 'app-settings-live-caption-translation',
     imports: [
@@ -32,6 +37,7 @@ type CaptionWindow = Window & {
         MatCheckboxModule,
         MatFormFieldModule,
         MatInputModule,
+        MatSelectModule,
     ],
     templateUrl: './settings-live-caption-translation.component.html',
     changeDetection: ChangeDetectionStrategy.Eager,
@@ -64,7 +70,8 @@ type CaptionWindow = Window & {
 })
 export class SettingsLiveCaptionTranslationComponent implements OnInit {
     enabled = false;
-    baseUrl = 'https://api.openai.com/v1';
+    provider: LiveCaptionTranslationProvider = 'google-free';
+    baseUrl = GOOGLE_FREE_BASE_URL;
     model = '';
     targetLanguage = 'Simplified Chinese';
     apiKey = '';
@@ -96,8 +103,27 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
         return Boolean(this.api) && this.supportAvailable;
     }
 
+    get usesGoogleFree(): boolean {
+        return this.provider === 'google-free';
+    }
+
     ngOnInit(): void {
         void this.load();
+    }
+
+    onProviderChanged(): void {
+        this.error = '';
+        this.saved = '';
+        if (this.provider === 'google-free') {
+            this.baseUrl = GOOGLE_FREE_BASE_URL;
+            this.model = '';
+            this.apiKey = '';
+        } else if (
+            !this.baseUrl ||
+            this.baseUrl === GOOGLE_FREE_BASE_URL
+        ) {
+            this.baseUrl = OPENAI_BASE_URL;
+        }
     }
 
     async save(): Promise<void> {
@@ -110,18 +136,22 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
         try {
             const patch: LiveCaptionTranslationSettingsUpdate = {
                 enabled: this.enabled,
-                provider: 'openai-compatible',
-                baseUrl: this.baseUrl,
-                model: this.model,
+                provider: this.provider,
+                baseUrl: this.usesGoogleFree
+                    ? GOOGLE_FREE_BASE_URL
+                    : this.baseUrl,
+                model: this.usesGoogleFree ? '' : this.model,
                 targetLanguage: this.targetLanguage,
             };
-            if (this.apiKey.trim()) {
+            if (!this.usesGoogleFree && this.apiKey.trim()) {
                 patch.apiKey = this.apiKey;
             }
             const next = await this.api.updateTranslationSettings(patch);
             this.apiKey = '';
             this.apply(next);
-            this.saved = 'Saved securely.';
+            this.saved = this.usesGoogleFree
+                ? 'Saved. Google free translation needs no API key.'
+                : 'Saved securely.';
         } catch (error) {
             this.error = this.message(error);
         } finally {
@@ -172,6 +202,7 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
 
     private apply(settings: LiveCaptionTranslationSettings): void {
         this.enabled = settings.enabled;
+        this.provider = settings.provider;
         this.baseUrl = settings.baseUrl;
         this.model = settings.model;
         this.targetLanguage = settings.targetLanguage;
