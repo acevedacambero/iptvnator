@@ -20,7 +20,7 @@ export function normalizeLiveCaptionTranslationBaseUrl(value?: string): string {
         throw new Error('Translation API URL is invalid.');
     }
 
-    const localHost = ['localhost', '127.0.0.1', '::1'].includes(
+    const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(
         parsed.hostname.toLowerCase()
     );
     if (parsed.protocol !== 'https:' && !(localHost && parsed.protocol === 'http:')) {
