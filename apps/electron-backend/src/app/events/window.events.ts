@@ -5,7 +5,8 @@
  * coupling to the static main-window reference.
  */
 
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, session } from 'electron';
+import { join } from 'path';
 import {
     WINDOW_CLOSE,
     WINDOW_GET_STATE,
@@ -26,6 +27,20 @@ interface WindowState {
     isFullScreen: boolean;
 }
 
+let liveCaptionPreloadRegistered = false;
+
+function registerLiveCaptionPreload(): void {
+    if (liveCaptionPreloadRegistered) {
+        return;
+    }
+    session.defaultSession.registerPreloadScript({
+        type: 'frame',
+        id: 'iptvnator-live-caption',
+        filePath: join(__dirname, 'live-caption.preload.js'),
+    });
+    liveCaptionPreloadRegistered = true;
+}
+
 function getSenderWindow(
     event: Electron.IpcMainInvokeEvent
 ): Electron.BrowserWindow | null {
@@ -42,6 +57,7 @@ function getWindowState(win: Electron.BrowserWindow | null): WindowState {
 
 export default class WindowEvents {
     static bootstrapWindowEvents(): Electron.IpcMain {
+        registerLiveCaptionPreload();
         return ipcMain;
     }
 }
