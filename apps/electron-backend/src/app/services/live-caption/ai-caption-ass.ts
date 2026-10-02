@@ -25,7 +25,7 @@ export const DEFAULT_AI_CAPTION_ASS_STYLE: AiCaptionAssStyle = {
     translatedFontSize: 50,
     sourceY: 900,
     translatedY: 970,
-    outlineSize: 0,
+    outlineSize: 3,
     shadowSize: 0,
 };
 
@@ -61,9 +61,11 @@ function eventLine(
         `\\fs${Math.round(fontSize)}`,
         `\\bord${style.outlineSize}`,
         `\\shad${style.shadowSize}`,
-        // ASS colours are &HAABBGGRR&. User preference: plain black captions
-        // with no outline or shadow, matching ordinary CC-style presentation.
-        '\\1c&H00000000&',
+        // ASS colours are &HAABBGGRR&. V2 baseline is white text with a
+        // black outline; size and vertical position remain style parameters
+        // so the Settings UI can expose them without changing the renderer.
+        '\\1c&H00FFFFFF&',
+        '\\3c&H00000000&',
         '}',
         escapeAssText(text),
     ].join('');
