@@ -14,6 +14,11 @@ const {
     preparePackagedFrameCopyArtifacts,
 } = require('./embedded-mpv-frame-copy-files.cjs');
 
+const REQUIRED_WINDOWS_LIVE_CAPTION_HELPERS = [
+    'iptvnator_caption_helper.exe',
+    'iptvnator_whisper_helper.exe',
+];
+
 function log(message) {
     console.log(`  - ${message}`);
 }
@@ -71,6 +76,31 @@ function copyEmbeddedMpvNativeOutput(
         destinationDir,
         platform,
         resolvedPreparationOptions
+    );
+}
+
+function validatePackagedLiveCaptionHelpers(
+    resourceDir,
+    { platform, targetArch, required }
+) {
+    // V1 process-loopback capture is deliberately Windows x64 only. Other
+    // packages must not be rejected for artifacts they can never execute.
+    if (platform !== 'win32' || targetArch !== 'x64' || !required) {
+        return [];
+    }
+
+    const nativeDir = path.join(
+        resourceDir,
+        'app.asar.unpacked',
+        'electron-backend',
+        'native'
+    );
+    return REQUIRED_WINDOWS_LIVE_CAPTION_HELPERS.filter((fileName) => {
+        const filePath = path.join(nativeDir, fileName);
+        return !fs.existsSync(filePath) || !fs.statSync(filePath).isFile();
+    }).map(
+        (fileName) =>
+            `Missing required Windows AI live-caption helper: ${path.join(nativeDir, fileName)}`
     );
 }
 
@@ -190,6 +220,7 @@ async function afterPackHook(params) {
     const requireEmbeddedMpv = isTruthy(
         process.env.IPTVNATOR_REQUIRE_EMBEDDED_MPV
     );
+    const targetArch = resolveElectronBuilderArchName(params.arch);
     const linuxPackagingContext = resolveLinuxFrameCopyPackagingContext(
         params,
         {
@@ -224,11 +255,11 @@ async function afterPackHook(params) {
         linuxPackagingContext?.foreignArch ??
         isForeignLinuxEmbeddedMpvArch(params.electronPlatformName, params.arch);
     if (foreignArch) {
-        const targetArch = linuxPackagingContext.targetArch;
+        const linuxTargetArch = linuxPackagingContext.targetArch;
         log(
-            `embedded MPV addon is not built for ${targetArch}; packaging an unavailable marker instead`
+            `embedded MPV addon is not built for ${linuxTargetArch}; packaging an unavailable marker instead`
         );
-        writeEmbeddedMpvUnavailableMarker(resourceDir, targetArch);
+        writeEmbeddedMpvUnavailableMarker(resourceDir, linuxTargetArch);
     } else {
         copyEmbeddedMpvNativeOutput(
             resourceDir,
@@ -241,6 +272,27 @@ async function afterPackHook(params) {
                   }
                 : undefined
         );
+    }
+
+    const liveCaptionErrors = validatePackagedLiveCaptionHelpers(resourceDir, {
+        platform: params.electronPlatformName,
+        targetArch,
+        required: requireEmbeddedMpv,
+    });
+    if (liveCaptionErrors.length > 0) {
+        throw new Error(
+            [
+                'Windows AI live-caption package validation failed.',
+                ...liveCaptionErrors.map((error) => `- ${error}`),
+            ].join('\n')
+        );
+    }
+    if (
+        params.electronPlatformName === 'win32' &&
+        targetArch === 'x64' &&
+        requireEmbeddedMpv
+    ) {
+        log('Windows AI live-caption helpers validated');
     }
 
     const errors = validatePackagedEmbeddedMpv(resourceDir, {
@@ -291,5 +343,7 @@ module.exports = afterPackHook;
 module.exports.ensureSnapGraphicsContentMount = ensureSnapGraphicsContentMount;
 module.exports.resolveLinuxFrameCopyPackagingContext =
     resolveLinuxFrameCopyPackagingContext;
+module.exports.validatePackagedLiveCaptionHelpers =
+    validatePackagedLiveCaptionHelpers;
 module.exports.writeEmbeddedMpvUnavailableMarker =
     writeEmbeddedMpvUnavailableMarker;
