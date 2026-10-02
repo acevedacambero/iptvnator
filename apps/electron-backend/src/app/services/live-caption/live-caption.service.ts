@@ -14,6 +14,7 @@ import {
     LiveCaptionAudioSourceEvent,
     LiveCaptionProcessAudioSource,
 } from './live-caption-process-audio-source';
+import { liveCaptionTranslationSettingsStore } from './live-caption-translation-settings.store';
 import { LiveCaptionTranslator } from './live-caption-translator';
 import { LiveCaptionWhisperClient } from './live-caption-whisper-client';
 import {
@@ -145,9 +146,18 @@ export class LiveCaptionService {
         const generation = ++this.generation;
         let translator: LiveCaptionTranslator | null = null;
         let translationError: string | undefined;
-        if (options.translation?.enabled === true) {
+        let translationOptions = options.translation;
+        if (translationOptions === undefined) {
             try {
-                translator = new LiveCaptionTranslator(options.translation);
+                translationOptions =
+                    liveCaptionTranslationSettingsStore.resolveForSession();
+            } catch (error) {
+                translationError = errorMessage(error);
+            }
+        }
+        if (translationOptions?.enabled === true) {
+            try {
+                translator = new LiveCaptionTranslator(translationOptions);
             } catch (error) {
                 // Translation is deliberately optional. A bad provider config
                 // must not take source-language live captions down with it.
@@ -388,7 +398,7 @@ export class LiveCaptionService {
                 this.publishActive(active, 'running');
             }
         } catch (error) {
-            if (this.isCurrent(active) && !active.stopping) {
+            if (this.isTranslationCurrent(active, request)) {
                 active.translationError = errorMessage(error);
                 active.lastTranslatedText = '';
                 this.publishActive(active, 'running');
