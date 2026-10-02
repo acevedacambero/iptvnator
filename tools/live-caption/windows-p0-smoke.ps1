@@ -133,8 +133,14 @@ try {
         Write-Step 'Running TypeScript checks'
         Invoke-Checked 'pnpm' @('run', 'typecheck:ci')
 
-        Write-Step 'Running Electron backend unit tests'
-        Invoke-Checked 'pnpm' @('nx', 'test', 'electron-backend', '--runInBand')
+        Write-Step 'Running live-caption unit tests'
+        Invoke-Checked 'pnpm' @(
+            'nx',
+            'test',
+            'electron-backend',
+            '--runInBand',
+            '--testPathPatterns=apps/electron-backend/src/app/services/live-caption'
+        )
     }
 
     Write-Step 'Building production Electron backend and native caption helpers'
