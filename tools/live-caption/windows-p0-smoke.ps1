@@ -1,0 +1,194 @@
+param(
+    [switch]$SkipInstall,
+    [switch]$SkipTests,
+    [switch]$SkipRuntimeStage,
+    [switch]$SkipPackage,
+    [switch]$LaunchP0
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Write-Step([string]$Message) {
+    Write-Host "`n==> $Message" -ForegroundColor Cyan
+}
+
+function Invoke-Checked([string]$Command, [string[]]$Arguments) {
+    Write-Host ("> {0} {1}" -f $Command, ($Arguments -join ' '))
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Command exited with code $LASTEXITCODE"
+    }
+}
+
+function Assert-File([string]$Path, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Missing $Label: $Path"
+    }
+    $length = (Get-Item -LiteralPath $Path).Length
+    if ($length -le 0) {
+        throw "$Label is empty: $Path"
+    }
+    Write-Host "  OK  $Label"
+}
+
+function Assert-OneFile([string[]]$Candidates, [string]$Label) {
+    foreach ($candidate in $Candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            Assert-File $candidate $Label
+            return $candidate
+        }
+    }
+    throw "Missing $Label. Checked: $($Candidates -join ', ')"
+}
+
+function Get-WindowsBuildNumber {
+    try {
+        $currentVersion = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        return [int]$currentVersion.CurrentBuildNumber
+    } catch {
+        return [Environment]::OSVersion.Version.Build
+    }
+}
+
+function Get-NodeArch {
+    $arch = (& node -p "process.arch").Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to read Node architecture.'
+    }
+    return $arch
+}
+
+if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') {
+    throw 'This smoke harness must run on Windows.'
+}
+if (-not [Environment]::Is64BitOperatingSystem) {
+    throw 'Windows x64 is required.'
+}
+if ($LaunchP0 -and $SkipPackage) {
+    throw '-LaunchP0 requires packaging; remove -SkipPackage.'
+}
+
+$buildNumber = Get-WindowsBuildNumber
+if ($buildNumber -lt 20348) {
+    throw "Windows build 20348 or newer is required for process-scoped WASAPI loopback. Current build: $buildNumber"
+}
+
+$nodeArch = Get-NodeArch
+if ($nodeArch -ne 'x64') {
+    throw "Node x64 is required. Current Node architecture: $nodeArch"
+}
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
+Push-Location $repoRoot
+
+$builderPath = Join-Path $repoRoot 'electron-builder.json'
+$builderOriginal = [IO.File]::ReadAllText($builderPath)
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+try {
+    Write-Step "Windows P0 environment (build $buildNumber, Node $nodeArch)"
+
+    foreach ($command in @('node', 'pnpm', 'git', 'cmake')) {
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+            throw "Required command is not on PATH: $command"
+        }
+    }
+
+    if (-not $SkipInstall) {
+        Write-Step 'Installing workspace dependencies'
+        Invoke-Checked 'pnpm' @('install', '--frozen-lockfile')
+    }
+
+    if (-not $SkipRuntimeStage) {
+        Write-Step 'Staging checksum-pinned Windows libmpv runtime'
+        $pinPath = Join-Path $repoRoot 'tools\embedded-mpv\windows-runtime-pin.json'
+        $pin = Get-Content -LiteralPath $pinPath -Raw | ConvertFrom-Json
+        Invoke-Checked 'node' @(
+            'tools/embedded-mpv/stage-windows-runtime-archive.mjs',
+            [string]$pin.asset.url,
+            [string]$pin.asset.sha256
+        )
+    }
+
+    Write-Step 'Staging pinned whisper.cpp source'
+    Invoke-Checked 'node' @('tools/live-caption/stage-whisper-source.mjs')
+
+    $env:IPTVNATOR_EMBEDDED_MPV_PLATFORM = 'win32'
+    $env:IPTVNATOR_EMBEDDED_MPV_ARCH = 'x64'
+    $env:IPTVNATOR_REQUIRE_EMBEDDED_MPV = '1'
+    $env:IPTVNATOR_REQUIRE_LIVE_CAPTIONS = '1'
+
+    if (-not $SkipTests) {
+        Write-Step 'Running TypeScript checks'
+        Invoke-Checked 'pnpm' @('run', 'typecheck:ci')
+
+        Write-Step 'Running Electron backend unit tests'
+        Invoke-Checked 'pnpm' @('nx', 'test', 'electron-backend', '--runInBand')
+    }
+
+    Write-Step 'Building production Electron backend and native caption helpers'
+    Invoke-Checked 'pnpm' @('run', 'build:backend')
+
+    $nativeDist = Join-Path $repoRoot 'dist\apps\electron-backend\native'
+    Assert-File (Join-Path $nativeDist 'embedded_mpv.node') 'Embedded MPV addon'
+    Assert-File (Join-Path $nativeDist 'iptvnator_caption_helper.exe') 'WASAPI capture helper'
+    Assert-File (Join-Path $nativeDist 'iptvnator_whisper_helper.exe') 'Whisper ASR helper'
+    Assert-File (Join-Path $nativeDist 'LICENSE.whisper.cpp.txt') 'whisper.cpp license'
+    Assert-File (Join-Path $repoRoot 'dist\apps\electron-backend\live-caption.preload.js') 'live-caption preload'
+    Assert-OneFile @(
+        (Join-Path $nativeDist 'mpv-2.dll'),
+        (Join-Path $nativeDist 'libmpv-2.dll'),
+        (Join-Path $nativeDist 'mpv.dll'),
+        (Join-Path $nativeDist 'libmpv.dll'),
+        (Join-Path $nativeDist 'lib\mpv-2.dll'),
+        (Join-Path $nativeDist 'lib\libmpv-2.dll'),
+        (Join-Path $nativeDist 'lib\mpv.dll'),
+        (Join-Path $nativeDist 'lib\libmpv.dll')
+    ) 'libmpv runtime' | Out-Null
+
+    if (-not $SkipPackage) {
+        Write-Step 'Temporarily constraining electron-builder Windows output to x64'
+        $builder = $builderOriginal | ConvertFrom-Json
+        foreach ($target in @($builder.win.target)) {
+            if ($null -ne $target -and $target -isnot [string]) {
+                $target.arch = @('x64')
+            }
+        }
+        $builderJson = $builder | ConvertTo-Json -Depth 100
+        [IO.File]::WriteAllText($builderPath, $builderJson + "`n", $utf8NoBom)
+
+        Write-Step 'Building unsigned local Windows package'
+        Invoke-Checked 'pnpm' @('run', 'make:app', '--', '--publishPolicy=never')
+
+        $unpackedExe = Get-ChildItem -Path (Join-Path $repoRoot 'dist\executables') -Recurse -Filter 'IPTVnator.exe' -File |
+            Where-Object { $_.FullName -match 'win.*unpacked' } |
+            Select-Object -First 1
+        if (-not $unpackedExe) {
+            throw 'Unable to locate the packaged Windows IPTVnator.exe under dist\executables.'
+        }
+
+        $packageNative = Join-Path $unpackedExe.Directory.FullName 'resources\app.asar.unpacked\electron-backend\native'
+        Assert-File (Join-Path $packageNative 'iptvnator_caption_helper.exe') 'packaged WASAPI capture helper'
+        Assert-File (Join-Path $packageNative 'iptvnator_whisper_helper.exe') 'packaged Whisper ASR helper'
+        Assert-File (Join-Path $packageNative 'LICENSE.whisper.cpp.txt') 'packaged whisper.cpp license'
+
+        Write-Host "`nPackaged executable: $($unpackedExe.FullName)" -ForegroundColor Green
+
+        if ($LaunchP0) {
+            Write-Step 'Launching P0 ASS/OSD probe'
+            $env:IPTVNATOR_AI_CAPTION_P0_TEST = '1'
+            Start-Process -FilePath $unpackedExe.FullName
+            Write-Host 'Open any channel with Embedded MPV Native View.' -ForegroundColor Yellow
+            Write-Host 'Expected overlay:' -ForegroundColor Yellow
+            Write-Host '  IPTVnator AI live captions - P0 overlay path active'
+            Write-Host '  IPTVnator AI 实时双语字幕 - P0 显示通道已启用'
+        }
+    }
+
+    Write-Host "`nWindows AI live-caption P0 smoke preparation completed successfully." -ForegroundColor Green
+} finally {
+    [IO.File]::WriteAllText($builderPath, $builderOriginal, $utf8NoBom)
+    Pop-Location
+}
