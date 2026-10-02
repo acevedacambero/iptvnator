@@ -14,23 +14,27 @@ export interface LiveCaptionSupport {
     modelConfigured: boolean;
 }
 
-export type LiveCaptionTranslationProvider = 'openai-compatible';
+export type LiveCaptionTranslationProvider =
+    | 'google-free'
+    | 'openai-compatible';
 
 /**
  * Optional second-stage translation for live ASR captions.
  *
- * Translation is deliberately session-scoped. The main process receives the
- * credential only when captions are started; it is not part of MPV JSON IPC
- * and must never be logged. English/source captions remain fully functional
- * when translation is disabled or temporarily fails.
+ * Translation is deliberately session-scoped. Google free translation needs
+ * no credential; OpenAI-compatible providers keep their credential in the
+ * main process only. Neither credential nor translated text enters MPV JSON
+ * IPC until the final display overlay is built. English/source captions remain
+ * fully functional when translation is disabled or temporarily fails.
  */
 export interface LiveCaptionTranslationOptions {
     enabled?: boolean;
     provider?: LiveCaptionTranslationProvider;
-    /** OpenAI-compatible API root, e.g. https://api.openai.com/v1. */
+    /** Provider API root. Google free defaults to https://translate.googleapis.com. */
     baseUrl?: string;
+    /** Required only for OpenAI-compatible providers. */
     apiKey?: string;
-    /** Provider model name. Required when translation is enabled. */
+    /** Provider model name. Required only for OpenAI-compatible providers. */
     model?: string;
     /** Human-readable target language, defaults to Simplified Chinese. */
     targetLanguage?: string;
@@ -46,7 +50,7 @@ export interface LiveCaptionTranslationSettings {
     model: string;
     targetLanguage: string;
     hasApiKey: boolean;
-    /** Whether Electron can encrypt/decrypt the credential on this machine. */
+    /** Whether Electron can encrypt/decrypt an OpenAI-compatible credential. */
     encryptionAvailable: boolean;
 }
 
@@ -70,7 +74,7 @@ export interface LiveCaptionStartOptions {
     threads?: number;
     /**
      * Optional per-session override used by tests/integrations. Normal desktop
-     * UI relies on the main-process encrypted translation settings instead.
+     * UI relies on the main-process translation settings instead.
      */
     translation?: LiveCaptionTranslationOptions;
 }
