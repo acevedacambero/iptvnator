@@ -11,9 +11,29 @@ export interface LiveCaptionTranslationResult {
     elapsedMs: number;
 }
 
-function normalizeBaseUrl(value?: string): string {
-    const baseUrl = value?.trim() || DEFAULT_API_BASE_URL;
-    return baseUrl.replace(/\/+$/, '');
+export function normalizeLiveCaptionTranslationBaseUrl(value?: string): string {
+    const raw = value?.trim() || DEFAULT_API_BASE_URL;
+    let parsed: URL;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error('Translation API URL is invalid.');
+    }
+
+    const localHost = ['localhost', '127.0.0.1', '::1'].includes(
+        parsed.hostname.toLowerCase()
+    );
+    if (parsed.protocol !== 'https:' && !(localHost && parsed.protocol === 'http:')) {
+        throw new Error(
+            'Translation API URL must use HTTPS (HTTP is allowed only for localhost).'
+        );
+    }
+    if (parsed.username || parsed.password) {
+        throw new Error('Translation API URL must not contain credentials.');
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    return parsed.toString().replace(/\/+$/, '');
 }
 
 function normalizeTimeout(value?: number): number {
@@ -81,7 +101,7 @@ export class LiveCaptionTranslator {
         }
         this.apiKey = options.apiKey?.trim() ?? '';
         this.model = options.model?.trim() ?? '';
-        this.baseUrl = normalizeBaseUrl(options.baseUrl);
+        this.baseUrl = normalizeLiveCaptionTranslationBaseUrl(options.baseUrl);
         this.targetLanguage =
             options.targetLanguage?.trim() || DEFAULT_TARGET_LANGUAGE;
         this.timeoutMs = normalizeTimeout(options.timeoutMs);
