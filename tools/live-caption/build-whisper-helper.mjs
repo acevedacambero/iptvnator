@@ -36,11 +36,25 @@ const outputDir = path.join(
     'Release'
 );
 const outputFile = path.join(outputDir, 'iptvnator_whisper_helper.exe');
-const required = ['1', 'true', 'yes', 'on'].includes(
-    String(process.env.IPTVNATOR_REQUIRE_LIVE_CAPTIONS ?? '')
-        .trim()
-        .toLowerCase()
-);
+
+function isTruthy(value) {
+    return ['1', 'true', 'yes', 'on'].includes(
+        String(value ?? '')
+            .trim()
+            .toLowerCase()
+    );
+}
+
+// Existing official Windows builds already require the Embedded MPV runtime.
+// Unless explicitly overridden, use that same gate for the caption helper so
+// release/PR artifacts cannot silently ship the button without its ASR worker.
+const explicitRequirement = process.env.IPTVNATOR_REQUIRE_LIVE_CAPTIONS;
+const required =
+    explicitRequirement === undefined
+        ? isTruthy(process.env.IPTVNATOR_REQUIRE_EMBEDDED_MPV) &&
+          process.platform === 'win32' &&
+          process.arch === 'x64'
+        : isTruthy(explicitRequirement);
 
 function log(message) {
     process.stdout.write(`[live-caption] ${message}\n`);
@@ -83,6 +97,18 @@ function validatePinnedSource() {
     );
 }
 
+function stagePinnedSourceIfRequired() {
+    if (validatePinnedSource() || !required) {
+        return;
+    }
+    run(process.execPath, ['tools/live-caption/stage-whisper-source.mjs']);
+    if (!validatePinnedSource()) {
+        throw new Error(
+            `Pinned whisper.cpp ${WHISPER_CPP_SOURCE.tag} source staging completed without a valid revision stamp.`
+        );
+    }
+}
+
 function main() {
     fs.rmSync(outputFile, { force: true });
     if (process.platform !== 'win32' || process.arch !== 'x64') {
@@ -94,16 +120,15 @@ function main() {
         log(`Skipping Whisper helper on ${process.platform}-${process.arch}.`);
         return;
     }
+
+    stagePinnedSourceIfRequired();
     if (!validatePinnedSource()) {
         const message = [
             'Pinned whisper.cpp source is not staged.',
             'Run: node tools/live-caption/stage-whisper-source.mjs',
             `Expected ${WHISPER_CPP_SOURCE.tag} (${WHISPER_CPP_SOURCE.commit}).`,
         ].join(' ');
-        if (required) {
-            throw new Error(message);
-        }
-        log(`Skipping Whisper helper. ${message}`);
+        log(`Skipping optional Whisper helper. ${message}`);
         return;
     }
 
@@ -120,7 +145,7 @@ function main() {
         'Visual Studio 17 2022',
         '-A',
         'x64',
-        `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\\\', '/')}`,
+        `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\', '/')}`,
     ]);
     run('cmake', [
         '--build',
@@ -132,9 +157,15 @@ function main() {
         '--parallel',
     ]);
 
-    const builtHelper = path.join(buildRoot, 'bin', 'iptvnator_whisper_helper.exe');
+    const builtHelper = path.join(
+        buildRoot,
+        'bin',
+        'iptvnator_whisper_helper.exe'
+    );
     if (!fs.existsSync(builtHelper)) {
-        throw new Error(`Whisper helper build produced no executable: ${builtHelper}`);
+        throw new Error(
+            `Whisper helper build produced no executable: ${builtHelper}`
+        );
     }
     fs.copyFileSync(builtHelper, outputFile);
     if (!fs.statSync(outputFile).isFile() || fs.statSync(outputFile).size === 0) {
