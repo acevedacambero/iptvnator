@@ -6,11 +6,13 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import type {
+    LiveCaptionSupport,
     LiveCaptionTranslationSettings,
     LiveCaptionTranslationSettingsUpdate,
 } from '@iptvnator/shared/interfaces';
 
 interface LiveCaptionTranslationSettingsApi {
+    getSupport: () => Promise<LiveCaptionSupport>;
     getTranslationSettings: () => Promise<LiveCaptionTranslationSettings>;
     updateTranslationSettings: (
         patch: LiveCaptionTranslationSettingsUpdate
@@ -72,6 +74,7 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
     saving = false;
     error = '';
     saved = '';
+    private supportAvailable = false;
 
     private readonly api?: LiveCaptionTranslationSettingsApi;
 
@@ -81,7 +84,8 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
                 ? undefined
                 : (window as CaptionWindow).liveCaptions;
         if (
-            bridge?.getTranslationSettings &&
+            bridge?.getSupport &&
+            bridge.getTranslationSettings &&
             bridge.updateTranslationSettings
         ) {
             this.api = bridge as LiveCaptionTranslationSettingsApi;
@@ -89,7 +93,7 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
     }
 
     get available(): boolean {
-        return Boolean(this.api);
+        return Boolean(this.api) && this.supportAvailable;
     }
 
     ngOnInit(): void {
@@ -97,7 +101,7 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
     }
 
     async save(): Promise<void> {
-        if (!this.api || this.saving) {
+        if (!this.api || !this.supportAvailable || this.saving) {
             return;
         }
         this.error = '';
@@ -126,7 +130,7 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
     }
 
     async clearApiKey(): Promise<void> {
-        if (!this.api || this.saving) {
+        if (!this.api || !this.supportAvailable || this.saving) {
             return;
         }
         this.error = '';
@@ -153,6 +157,11 @@ export class SettingsLiveCaptionTranslationComponent implements OnInit {
             return;
         }
         try {
+            const support = await this.api.getSupport();
+            this.supportAvailable = support.supported;
+            if (!this.supportAvailable) {
+                return;
+            }
             this.apply(await this.api.getTranslationSettings());
         } catch (error) {
             this.error = this.message(error);
