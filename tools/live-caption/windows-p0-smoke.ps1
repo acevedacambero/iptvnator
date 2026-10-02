@@ -43,8 +43,16 @@ function Assert-OneFile([string[]]$Candidates, [string]$Label) {
 }
 
 function Assert-UsageExit([string]$Path, [string]$Label) {
-    & $Path *> $null
-    $exitCode = $LASTEXITCODE
+    $stdoutPath = [IO.Path]::GetTempFileName()
+    $stderrPath = [IO.Path]::GetTempFileName()
+    try {
+        $process = Start-Process -FilePath $Path -Wait -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $exitCode = $process.ExitCode
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
     if ($exitCode -ne 64) {
         throw "$Label did not start cleanly; expected usage exit code 64, received $exitCode ($Path)"
     }
