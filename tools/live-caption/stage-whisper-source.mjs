@@ -44,7 +44,8 @@ function readVerifiedStamp() {
             stamp?.commit === WHISPER_CPP_SOURCE.commit &&
             fs.existsSync(path.join(destination, 'CMakeLists.txt')) &&
             fs.existsSync(path.join(destination, 'include', 'whisper.h')) &&
-            fs.existsSync(path.join(destination, 'ggml', 'CMakeLists.txt'))
+            fs.existsSync(path.join(destination, 'ggml', 'CMakeLists.txt')) &&
+            fs.existsSync(path.join(destination, 'LICENSE'))
             ? stamp.commit
             : null;
     } catch {
@@ -87,6 +88,12 @@ if (revision !== WHISPER_CPP_SOURCE.commit) {
     fs.rmSync(destination, { recursive: true, force: true });
     throw new Error(
         `Pinned whisper.cpp tag ${WHISPER_CPP_SOURCE.tag} resolved to ${revision ?? '<missing>'}, expected ${WHISPER_CPP_SOURCE.commit}.`
+    );
+}
+if (!fs.existsSync(path.join(destination, 'LICENSE'))) {
+    fs.rmSync(destination, { recursive: true, force: true });
+    throw new Error(
+        `Pinned whisper.cpp ${WHISPER_CPP_SOURCE.tag} source is missing LICENSE.`
     );
 }
 
