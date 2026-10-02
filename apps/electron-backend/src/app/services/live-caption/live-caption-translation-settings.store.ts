@@ -62,18 +62,25 @@ function normalizePersisted(
                 fallback.targetLanguage,
         };
     }
+    const model = cleanString(raw.model);
+    const encryptedApiKey =
+        typeof raw.encryptedApiKey === 'string' && raw.encryptedApiKey
+            ? raw.encryptedApiKey
+            : undefined;
+    // Older/hand-edited metadata may claim translation is enabled without a
+    // usable provider configuration. Normalize it to disabled so startup does
+    // not repeatedly surface a non-fatal configuration error on every session.
+    const enabled = raw.enabled === true && Boolean(model && encryptedApiKey);
     return {
         version: 1,
-        enabled: raw.enabled === true,
+        enabled,
         provider: 'openai-compatible',
         baseUrl,
-        model: cleanString(raw.model),
+        model,
         targetLanguage:
             cleanString(raw.targetLanguage, fallback.targetLanguage) ||
             fallback.targetLanguage,
-        ...(typeof raw.encryptedApiKey === 'string' && raw.encryptedApiKey
-            ? { encryptedApiKey: raw.encryptedApiKey }
-            : {}),
+        ...(encryptedApiKey ? { encryptedApiKey } : {}),
     };
 }
 
@@ -183,13 +190,7 @@ export class LiveCaptionTranslationSettingsStore {
             return undefined;
         }
         if (!current.encryptedApiKey) {
-            return {
-                enabled: true,
-                provider: current.provider,
-                baseUrl: current.baseUrl,
-                model: current.model,
-                targetLanguage: current.targetLanguage,
-            };
+            return undefined;
         }
         if (!safeStorage.isEncryptionAvailable()) {
             throw new Error(
