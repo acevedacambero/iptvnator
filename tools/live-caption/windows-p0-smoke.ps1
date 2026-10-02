@@ -106,7 +106,7 @@ function Assert-CMakeBuildPath {
         return
     }
 
-    throw "CMake cannot build with Visual Studio $installationVersion: neither '$expectedGenerator' nor the NMake Makefiles fallback is available."
+    throw ("CMake cannot build with Visual Studio {0}: neither '{1}' nor the NMake Makefiles fallback is available." -f $installationVersion, $expectedGenerator)
 }
 
 if ($env:OS -ne 'Windows_NT') {
