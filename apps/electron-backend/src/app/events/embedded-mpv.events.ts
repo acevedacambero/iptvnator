@@ -35,7 +35,10 @@ import {
     LIVE_CAPTION_START,
     LIVE_CAPTION_STATE_CHANGED,
     LIVE_CAPTION_STOP,
+    LIVE_CAPTION_TRANSLATION_SETTINGS_GET,
+    LIVE_CAPTION_TRANSLATION_SETTINGS_UPDATE,
     LiveCaptionStartOptions,
+    LiveCaptionTranslationSettingsUpdate,
     ResolvedPortalPlayback,
 } from '@iptvnator/shared/interfaces';
 import App from '../app';
@@ -47,6 +50,7 @@ import { readEmbeddedMpvSessionOptions } from '../services/embedded-mpv-session-
 import { buildAiCaptionAssOverlay } from '../services/live-caption/ai-caption-ass';
 import { liveCaptionMpvOverlayService } from '../services/live-caption/live-caption-mpv-overlay.service';
 import { liveCaptionService } from '../services/live-caption/live-caption.service';
+import { liveCaptionTranslationSettingsStore } from '../services/live-caption/live-caption-translation-settings.store';
 
 const AI_CAPTION_P0_TEST_ENV = 'IPTVNATOR_AI_CAPTION_P0_TEST';
 
@@ -123,6 +127,14 @@ handleEmbeddedMpv(
 );
 handleEmbeddedMpv(LIVE_CAPTION_STOP, (sessionId?: string) =>
     liveCaptionService.stop(sessionId)
+);
+handleEmbeddedMpv(LIVE_CAPTION_TRANSLATION_SETTINGS_GET, () =>
+    liveCaptionTranslationSettingsStore.getPublicSettings()
+);
+handleEmbeddedMpv(
+    LIVE_CAPTION_TRANSLATION_SETTINGS_UPDATE,
+    (patch: LiveCaptionTranslationSettingsUpdate) =>
+        liveCaptionTranslationSettingsStore.update(patch)
 );
 
 liveCaptionService.subscribe((state) => {
