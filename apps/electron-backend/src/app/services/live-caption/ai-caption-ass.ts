@@ -25,8 +25,8 @@ export const DEFAULT_AI_CAPTION_ASS_STYLE: AiCaptionAssStyle = {
     translatedFontSize: 50,
     sourceY: 900,
     translatedY: 970,
-    outlineSize: 4,
-    shadowSize: 1,
+    outlineSize: 0,
+    shadowSize: 0,
 };
 
 const DEFAULT_OVERLAY_Z = 50;
@@ -61,10 +61,9 @@ function eventLine(
         `\\fs${Math.round(fontSize)}`,
         `\\bord${style.outlineSize}`,
         `\\shad${style.shadowSize}`,
-        // ASS colours are &HAABBGGRR&. Use a black face with an opaque white
-        // outline so captions remain readable on both bright and dark video.
+        // ASS colours are &HAABBGGRR&. User preference: plain black captions
+        // with no outline or shadow, matching ordinary CC-style presentation.
         '\\1c&H00000000&',
-        '\\3c&H00FFFFFF&',
         '}',
         escapeAssText(text),
     ].join('');
