@@ -14,9 +14,10 @@ const {
     preparePackagedFrameCopyArtifacts,
 } = require('./embedded-mpv-frame-copy-files.cjs');
 
-const REQUIRED_WINDOWS_LIVE_CAPTION_HELPERS = [
+const REQUIRED_WINDOWS_LIVE_CAPTION_FILES = [
     'iptvnator_caption_helper.exe',
     'iptvnator_whisper_helper.exe',
+    'LICENSE.whisper.cpp.txt',
 ];
 
 function log(message) {
@@ -95,12 +96,12 @@ function validatePackagedLiveCaptionHelpers(
         'electron-backend',
         'native'
     );
-    return REQUIRED_WINDOWS_LIVE_CAPTION_HELPERS.filter((fileName) => {
+    return REQUIRED_WINDOWS_LIVE_CAPTION_FILES.filter((fileName) => {
         const filePath = path.join(nativeDir, fileName);
         return !fs.existsSync(filePath) || !fs.statSync(filePath).isFile();
     }).map(
         (fileName) =>
-            `Missing required Windows AI live-caption helper: ${path.join(nativeDir, fileName)}`
+            `Missing required Windows AI live-caption artifact: ${path.join(nativeDir, fileName)}`
     );
 }
 
@@ -149,7 +150,7 @@ function resolveLinuxFrameCopyPackagingContext(
         }
         if (targetNames.includes(targetName)) {
             throw new Error(
-                `Linux Electron Builder target "${targetName}" is duplicated.`
+                `Linux frame-copy target "${targetName}" is duplicated.`
             );
         }
         targetNames.push(targetName);
@@ -292,7 +293,7 @@ async function afterPackHook(params) {
         targetArch === 'x64' &&
         requireEmbeddedMpv
     ) {
-        log('Windows AI live-caption helpers validated');
+        log('Windows AI live-caption helpers and license validated');
     }
 
     const errors = validatePackagedEmbeddedMpv(resourceDir, {
