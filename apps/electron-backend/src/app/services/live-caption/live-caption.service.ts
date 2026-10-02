@@ -7,6 +7,7 @@ import {
 import { buildAiCaptionAssOverlay } from './ai-caption-ass';
 import { extractNovelCaptionText } from './caption-overlap';
 import { resolveLiveCaptionHelperPath } from './live-caption-helper-platform.util';
+import { ensureDefaultLiveCaptionModel } from './live-caption-model-manager';
 import { liveCaptionMpvOverlayService } from './live-caption-mpv-overlay.service';
 import { LiveCaptionPcmWindow } from './live-caption-pcm-window';
 import {
@@ -80,15 +81,14 @@ export class LiveCaptionService {
         let reason: string | undefined;
         if (process.platform !== 'win32') {
             reason = 'AI live captions V1 are available on Windows only.';
+        } else if (process.arch !== 'x64') {
+            reason = 'AI live captions V1 currently require Windows x64.';
         } else if (!processLoopbackAvailable) {
             reason = `Process loopback audio capture requires Windows build ${MIN_PROCESS_LOOPBACK_BUILD} or newer.`;
         } else if (!captureHelperAvailable) {
             reason = 'The live-caption audio helper is missing from this build.';
         } else if (!whisperHelperAvailable) {
             reason = 'The Whisper live-caption helper is missing from this build.';
-        } else if (!modelConfigured) {
-            reason =
-                'No Whisper model is configured. Install ggml-small.en.bin in the IPTVnator user-data models/whisper directory or set IPTVNATOR_WHISPER_MODEL.';
         }
 
         return {
@@ -116,28 +116,8 @@ export class LiveCaptionService {
         options: LiveCaptionStartOptions = {}
     ): Promise<LiveCaptionState> {
         const support = this.getSupport();
-        if (process.platform !== 'win32') {
-            throw new Error('AI live captions V1 are available on Windows only.');
-        }
-        if (!support.processLoopbackAvailable) {
-            throw new Error(
-                `Process loopback audio capture requires Windows build ${MIN_PROCESS_LOOPBACK_BUILD} or newer.`
-            );
-        }
-        if (!support.captureHelperAvailable) {
-            throw new Error(
-                'The live-caption audio helper is missing from this build.'
-            );
-        }
-        if (!support.whisperHelperAvailable) {
-            throw new Error(
-                'The Whisper live-caption helper is missing from this build.'
-            );
-        }
-        if (!resolveLiveCaptionWhisperModelPath(options.modelPath)) {
-            throw new Error(
-                'No Whisper model is configured. Set IPTVNATOR_WHISPER_MODEL or place ggml-small.en.bin under the IPTVnator user-data models/whisper directory.'
-            );
+        if (!support.supported) {
+            throw new Error(support.reason ?? 'AI live captions are unavailable.');
         }
         if (!sessionId.trim()) {
             throw new Error('Embedded MPV session id is required.');
@@ -165,8 +145,14 @@ export class LiveCaptionService {
         });
 
         try {
+            const modelPath =
+                resolveLiveCaptionWhisperModelPath(options.modelPath) ??
+                (await ensureDefaultLiveCaptionModel());
+            if (!this.isCurrent(active)) {
+                return this.getState();
+            }
             await active.whisper.start({
-                modelPath: options.modelPath,
+                modelPath,
                 threads: options.threads,
             });
             if (!this.isCurrent(active)) {
