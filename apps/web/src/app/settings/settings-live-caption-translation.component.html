@@ -8,15 +8,19 @@
             <h4>AI live caption translation</h4>
             <p>
                 Show English speech recognition immediately, then add a
-                Simplified Chinese translation when the configured
-                OpenAI-compatible provider responds. Translation failures do
-                not stop English captions.
+                Simplified Chinese translation. Google free translation needs
+                no API key; OpenAI-compatible remains available as an optional
+                keyed provider. Translation failures never stop English captions.
             </p>
-            @if (!loading && !encryptionAvailable) {
+            @if (
+                !loading &&
+                provider === 'openai-compatible' &&
+                !encryptionAvailable
+            ) {
                 <p class="live-caption-translation-error">
                     Secure credential storage is unavailable on this system.
-                    English live captions still work, but an API key cannot be
-                    saved here.
+                    Google free translation still works, but an OpenAI-compatible
+                    API key cannot be saved here.
                 </p>
             }
         </div>
@@ -32,32 +36,57 @@
             </mat-checkbox>
 
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                <mat-label>OpenAI-compatible API URL</mat-label>
-                <input
-                    matInput
-                    type="url"
-                    [(ngModel)]="baseUrl"
+                <mat-label>Translation provider</mat-label>
+                <mat-select
+                    [(ngModel)]="provider"
                     [ngModelOptions]="{ standalone: true }"
                     [disabled]="loading || saving"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="https://api.openai.com/v1"
-                />
+                    (selectionChange)="onProviderChanged()"
+                >
+                    <mat-option value="google-free">
+                        Google Translate (free, no API key)
+                    </mat-option>
+                    <mat-option value="openai-compatible">
+                        OpenAI-compatible API
+                    </mat-option>
+                </mat-select>
             </mat-form-field>
 
-            <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                <mat-label>Translation model</mat-label>
-                <input
-                    matInput
-                    type="text"
-                    [(ngModel)]="model"
-                    [ngModelOptions]="{ standalone: true }"
-                    [disabled]="loading || saving"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="Enter the provider model name"
-                />
-            </mat-form-field>
+            @if (provider === 'google-free') {
+                <div class="live-caption-translation-status">
+                    Uses https://translate.googleapis.com. No API key or model
+                    configuration is required. This free endpoint is best-effort
+                    and may be rate-limited by Google.
+                </div>
+            } @else {
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>OpenAI-compatible API URL</mat-label>
+                    <input
+                        matInput
+                        type="url"
+                        [(ngModel)]="baseUrl"
+                        [ngModelOptions]="{ standalone: true }"
+                        [disabled]="loading || saving"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="https://api.openai.com/v1"
+                    />
+                </mat-form-field>
+
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>Translation model</mat-label>
+                    <input
+                        matInput
+                        type="text"
+                        [(ngModel)]="model"
+                        [ngModelOptions]="{ standalone: true }"
+                        [disabled]="loading || saving"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="Enter the provider model name"
+                    />
+                </mat-form-field>
+            }
 
             <mat-form-field appearance="outline" subscriptSizing="dynamic">
                 <mat-label>Target language</mat-label>
@@ -72,27 +101,29 @@
                 />
             </mat-form-field>
 
-            <mat-form-field appearance="outline" subscriptSizing="dynamic">
-                <mat-label>API key</mat-label>
-                <input
-                    matInput
-                    type="password"
-                    [(ngModel)]="apiKey"
-                    [ngModelOptions]="{ standalone: true }"
-                    [disabled]="loading || saving || !encryptionAvailable"
-                    autocomplete="new-password"
-                    spellcheck="false"
-                    [placeholder]="
-                        hasApiKey
-                            ? 'Saved securely — leave blank to keep it'
-                            : 'Enter API key'
-                    "
-                />
-                <mat-hint>
-                    The key is write-only in the UI and encrypted by Electron
-                    safeStorage before it is written to disk.
-                </mat-hint>
-            </mat-form-field>
+            @if (provider === 'openai-compatible') {
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>API key</mat-label>
+                    <input
+                        matInput
+                        type="password"
+                        [(ngModel)]="apiKey"
+                        [ngModelOptions]="{ standalone: true }"
+                        [disabled]="loading || saving || !encryptionAvailable"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                        [placeholder]="
+                            hasApiKey
+                                ? 'Saved securely — leave blank to keep it'
+                                : 'Enter API key'
+                        "
+                    />
+                    <mat-hint>
+                        The key is write-only in the UI and encrypted by Electron
+                        safeStorage before it is written to disk.
+                    </mat-hint>
+                </mat-form-field>
+            }
 
             <div class="live-caption-translation-actions">
                 <button
@@ -104,7 +135,7 @@
                 >
                     {{ saving ? 'Saving…' : 'Save translation settings' }}
                 </button>
-                @if (hasApiKey) {
+                @if (provider === 'openai-compatible' && hasApiKey) {
                     <button
                         mat-button
                         type="button"
