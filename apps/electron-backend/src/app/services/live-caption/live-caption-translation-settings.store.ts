@@ -6,6 +6,7 @@ import type {
     LiveCaptionTranslationSettings,
     LiveCaptionTranslationSettingsUpdate,
 } from '@iptvnator/shared/interfaces';
+import { normalizeLiveCaptionTranslationBaseUrl } from './live-caption-translator';
 
 const FILE_NAME = 'live-caption-translation.json';
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
@@ -44,11 +45,28 @@ function normalizePersisted(
         return fallback;
     }
     const raw = value as Partial<PersistedLiveCaptionTranslationSettings>;
+    let baseUrl = fallback.baseUrl;
+    try {
+        baseUrl = normalizeLiveCaptionTranslationBaseUrl(
+            cleanString(raw.baseUrl, fallback.baseUrl)
+        );
+    } catch {
+        // Invalid persisted endpoints are reset to the safe default. The key is
+        // also omitted below so it can never be sent to a substituted origin.
+        return {
+            ...fallback,
+            enabled: false,
+            model: cleanString(raw.model),
+            targetLanguage:
+                cleanString(raw.targetLanguage, fallback.targetLanguage) ||
+                fallback.targetLanguage,
+        };
+    }
     return {
         version: 1,
         enabled: raw.enabled === true,
         provider: 'openai-compatible',
-        baseUrl: cleanString(raw.baseUrl, fallback.baseUrl) || fallback.baseUrl,
+        baseUrl,
         model: cleanString(raw.model),
         targetLanguage:
             cleanString(raw.targetLanguage, fallback.targetLanguage) ||
@@ -85,6 +103,10 @@ export class LiveCaptionTranslationSettingsStore {
         patch: LiveCaptionTranslationSettingsUpdate
     ): LiveCaptionTranslationSettings {
         const current = this.read();
+        const nextBaseUrl =
+            patch.baseUrl === undefined
+                ? current.baseUrl
+                : normalizeLiveCaptionTranslationBaseUrl(patch.baseUrl);
         const next: PersistedLiveCaptionTranslationSettings = {
             ...current,
             enabled:
@@ -92,10 +114,7 @@ export class LiveCaptionTranslationSettingsStore {
                     ? patch.enabled
                     : current.enabled,
             provider: 'openai-compatible',
-            baseUrl:
-                patch.baseUrl === undefined
-                    ? current.baseUrl
-                    : cleanString(patch.baseUrl) || DEFAULT_BASE_URL,
+            baseUrl: nextBaseUrl,
             model:
                 patch.model === undefined
                     ? current.model
@@ -107,10 +126,19 @@ export class LiveCaptionTranslationSettingsStore {
                       DEFAULT_TARGET_LANGUAGE,
         };
 
+        // A credential is origin-bound. Never reuse an existing secret after
+        // the renderer changes the provider endpoint; require the user to
+        // enter the key again for that endpoint.
+        if (nextBaseUrl !== current.baseUrl && patch.apiKey === undefined) {
+            delete next.encryptedApiKey;
+        }
         if (patch.clearApiKey === true) {
             delete next.encryptedApiKey;
         }
         if (patch.apiKey !== undefined) {
+            if (typeof patch.apiKey !== 'string') {
+                throw new Error('Translation API key must be a string.');
+            }
             const apiKey = patch.apiKey.trim();
             if (!apiKey) {
                 delete next.encryptedApiKey;
@@ -200,6 +228,9 @@ export class LiveCaptionTranslationSettingsStore {
             encoding: 'utf8',
             mode: 0o600,
         });
+        // On Windows rename-over-existing can fail. Replace the tiny metadata
+        // file explicitly; the credential itself remains DPAPI-encrypted.
+        fs.rmSync(filePath, { force: true });
         fs.renameSync(tempPath, filePath);
     }
 
