@@ -17,6 +17,10 @@ describe('AI caption ASS overlay', () => {
         expect(lines[1]).toContain('美联储维持利率不变。');
         expect(lines[0]).toContain('\\pos(960,900)');
         expect(lines[1]).toContain('\\pos(960,970)');
+        expect(lines[0]).toContain('\\1c&H00000000&');
+        expect(lines[0]).toContain('\\3c&H00FFFFFF&');
+        expect(lines[1]).toContain('\\1c&H00000000&');
+        expect(lines[1]).toContain('\\3c&H00FFFFFF&');
         expect(overlay).toMatchObject({
             playResX: 1920,
             playResY: 1080,
