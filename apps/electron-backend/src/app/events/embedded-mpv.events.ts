@@ -30,8 +30,15 @@ import {
     EmbeddedMpvBounds,
     EmbeddedMpvRecordingStartOptions,
     EmbeddedMpvSupport,
+    LIVE_CAPTION_GET_STATE,
+    LIVE_CAPTION_GET_SUPPORT,
+    LIVE_CAPTION_START,
+    LIVE_CAPTION_STATE_CHANGED,
+    LIVE_CAPTION_STOP,
+    LiveCaptionStartOptions,
     ResolvedPortalPlayback,
 } from '@iptvnator/shared/interfaces';
+import App from '../app';
 import {
     EmbeddedMpvNativeService,
     embeddedMpvNativeService,
@@ -39,6 +46,7 @@ import {
 import { readEmbeddedMpvSessionOptions } from '../services/embedded-mpv-session-options';
 import { buildAiCaptionAssOverlay } from '../services/live-caption/ai-caption-ass';
 import { liveCaptionMpvOverlayService } from '../services/live-caption/live-caption-mpv-overlay.service';
+import { liveCaptionService } from '../services/live-caption/live-caption.service';
 
 const AI_CAPTION_P0_TEST_ENV = 'IPTVNATOR_AI_CAPTION_P0_TEST';
 
@@ -104,6 +112,26 @@ handleEmbeddedMpv(EMBEDDED_MPV_PREPARE, () =>
     withAiCaptionSupport(getService().prepareAddon())
 );
 
+handleEmbeddedMpv(LIVE_CAPTION_GET_SUPPORT, () =>
+    liveCaptionService.getSupport()
+);
+handleEmbeddedMpv(LIVE_CAPTION_GET_STATE, () => liveCaptionService.getState());
+handleEmbeddedMpv(
+    LIVE_CAPTION_START,
+    (sessionId: string, options?: LiveCaptionStartOptions) =>
+        liveCaptionService.start(sessionId, options)
+);
+handleEmbeddedMpv(LIVE_CAPTION_STOP, (sessionId?: string) =>
+    liveCaptionService.stop(sessionId)
+);
+
+liveCaptionService.subscribe((state) => {
+    if (!App.mainWindow || App.mainWindow.isDestroyed()) {
+        return;
+    }
+    App.mainWindow.webContents.send(LIVE_CAPTION_STATE_CHANGED, state);
+});
+
 handleEmbeddedMpv(
     EMBEDDED_MPV_CREATE_SESSION,
     (bounds: EmbeddedMpvBounds, title?: string, initialVolume?: number) => {
@@ -141,6 +169,10 @@ handleEmbeddedMpv(
 handleEmbeddedMpv(
     EMBEDDED_MPV_LOAD_PLAYBACK,
     async (sessionId: string, playback: ResolvedPortalPlayback) => {
+        // A new file behind the same libmpv session is a new caption
+        // generation. Stop capture first so a late ASR result can never paint
+        // over the replacement channel/programme.
+        await liveCaptionService.stop(sessionId);
         const result = getService().loadPlayback(sessionId, playback);
         // P0 probe: opt-in only. It proves the full Windows libmpv named-pipe
         // -> JSON IPC -> ASS OSD path (including Chinese glyph rendering)
@@ -264,16 +296,21 @@ handleEmbeddedMpv(EMBEDDED_MPV_SELECT_RECORDING_FOLDER, () =>
     getService().selectRecordingFolder()
 );
 
-handleEmbeddedMpv(EMBEDDED_MPV_DISPOSE_SESSION, (sessionId: string) => {
-    liveCaptionMpvOverlayService.disposeSession(sessionId);
-    return getService().disposeSession(sessionId);
-});
+handleEmbeddedMpv(
+    EMBEDDED_MPV_DISPOSE_SESSION,
+    async (sessionId: string) => {
+        await liveCaptionService.stop(sessionId);
+        liveCaptionMpvOverlayService.disposeSession(sessionId);
+        return getService().disposeSession(sessionId);
+    }
+);
 
 handleEmbeddedMpv(EMBEDDED_MPV_GET_FRAME_SOURCE, (sessionId: string) =>
     getService().getFrameSource(sessionId)
 );
 
 export function shutdownEmbeddedMpv(): void {
+    liveCaptionService.shutdown();
     liveCaptionMpvOverlayService.shutdown();
     getService().shutdown();
 }
