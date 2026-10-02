@@ -23,7 +23,7 @@ function Invoke-Checked([string]$Command, [string[]]$Arguments) {
 
 function Assert-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Missing $Label: $Path"
+        throw "Missing ${Label}: $Path"
     }
     $length = (Get-Item -LiteralPath $Path).Length
     if ($length -le 0) {
