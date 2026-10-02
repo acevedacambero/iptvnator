@@ -1,4 +1,7 @@
-import { LiveCaptionTranslator } from './live-caption-translator';
+import {
+    LiveCaptionTranslator,
+    normalizeLiveCaptionTranslationBaseUrl,
+} from './live-caption-translator';
 
 describe('LiveCaptionTranslator', () => {
     const originalFetch = globalThis.fetch;
@@ -42,7 +45,10 @@ describe('LiveCaptionTranslator', () => {
         expect(fetchMock.mock.calls[0][0]).toBe(
             'https://example.test/v1/chat/completions'
         );
-        const request = fetchMock.mock.calls[0][1] as RequestInit;
+        const request = fetchMock.mock.calls[0][1] as {
+            headers?: unknown;
+            body?: unknown;
+        };
         expect(request.headers).toEqual({
             Authorization: 'Bearer secret-key',
             'Content-Type': 'application/json',
@@ -104,6 +110,26 @@ describe('LiveCaptionTranslator', () => {
                     model: '',
                 })
         ).toThrow('Translation model is required.');
+    });
+
+    it('requires TLS for remote translation endpoints', () => {
+        expect(() =>
+            normalizeLiveCaptionTranslationBaseUrl('http://example.test/v1')
+        ).toThrow('must use HTTPS');
+        expect(
+            normalizeLiveCaptionTranslationBaseUrl('http://localhost:11434/v1/')
+        ).toBe('http://localhost:11434/v1');
+        expect(
+            normalizeLiveCaptionTranslationBaseUrl('https://example.test/v1/')
+        ).toBe('https://example.test/v1');
+    });
+
+    it('rejects credentials embedded in the endpoint URL', () => {
+        expect(() =>
+            normalizeLiveCaptionTranslationBaseUrl(
+                'https://user:password@example.test/v1'
+            )
+        ).toThrow('must not contain credentials');
     });
 
     it('does not allow an internal backlog', async () => {
