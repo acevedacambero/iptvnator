@@ -166,6 +166,28 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         });
     });
 
+    it('normalizes incomplete enabled metadata to disabled', () => {
+        fs.writeFileSync(
+            path.join(userDataPath, 'live-caption-translation.json'),
+            `${JSON.stringify({
+                version: 1,
+                enabled: true,
+                provider: 'openai-compatible',
+                baseUrl: 'https://example.test/v1',
+                model: 'translation-model',
+                targetLanguage: 'Simplified Chinese',
+            })}\n`,
+            'utf8'
+        );
+
+        expect(store.getPublicSettings()).toMatchObject({
+            enabled: false,
+            hasApiKey: false,
+            model: 'translation-model',
+        });
+        expect(store.resolveForSession()).toBeUndefined();
+    });
+
     it('falls back to translation disabled for corrupt persisted metadata', () => {
         fs.writeFileSync(
             path.join(userDataPath, 'live-caption-translation.json'),
