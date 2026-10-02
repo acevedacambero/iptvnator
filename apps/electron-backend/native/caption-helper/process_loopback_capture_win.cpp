@@ -28,6 +28,8 @@ constexpr DWORD kMinimumProcessLoopbackBuild = 20348;
 constexpr DWORD kCaptureSampleRate = 16000;
 constexpr WORD kCaptureChannels = 1;
 constexpr WORD kCaptureBitsPerSample = 16;
+constexpr UINT64 kQpc100nsPerSecond = 10000000ULL;
+constexpr UINT64 kClockTelemetryInterval100ns = 2500000ULL;
 
 class ScopedHandle {
 public:
@@ -51,6 +53,11 @@ public:
 
 private:
     HANDLE handle_ = nullptr;
+};
+
+struct ClockTelemetry {
+    UINT64 capturedFrames = 0;
+    UINT64 lastEmittedQpc100ns = 0;
 };
 
 DWORD currentWindowsBuild()
@@ -101,6 +108,22 @@ void emitUnsupported(DWORD build)
         "{\"event\":\"unsupported\",\"reason\":\"process-loopback-build\",\"build\":%lu,\"minimumBuild\":%lu}\n",
         static_cast<unsigned long>(build),
         static_cast<unsigned long>(kMinimumProcessLoopbackBuild)
+    );
+    std::fflush(stderr);
+}
+
+void emitClock(
+    UINT64 qpcEnd100ns,
+    UINT64 devicePositionEndFrames,
+    UINT64 capturedFrames
+)
+{
+    std::fprintf(
+        stderr,
+        "{\"event\":\"clock\",\"qpcEnd100ns\":%llu,\"devicePositionEndFrames\":%llu,\"capturedFrames\":%llu}\n",
+        static_cast<unsigned long long>(qpcEnd100ns),
+        static_cast<unsigned long long>(devicePositionEndFrames),
+        static_cast<unsigned long long>(capturedFrames)
     );
     std::fflush(stderr);
 }
@@ -244,7 +267,11 @@ bool writeAll(HANDLE output, const BYTE* data, DWORD byteCount)
     return true;
 }
 
-HRESULT drainCapture(IAudioCaptureClient* captureClient, HANDLE output)
+HRESULT drainCapture(
+    IAudioCaptureClient* captureClient,
+    HANDLE output,
+    ClockTelemetry& telemetry
+)
 {
     UINT32 packetFrames = 0;
     HRESULT hr = captureClient->GetNextPacketSize(&packetFrames);
@@ -257,7 +284,15 @@ HRESULT drainCapture(IAudioCaptureClient* captureClient, HANDLE output)
         BYTE* data = nullptr;
         UINT32 frames = 0;
         DWORD flags = 0;
-        hr = captureClient->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+        UINT64 devicePosition = 0;
+        UINT64 qpcPosition100ns = 0;
+        hr = captureClient->GetBuffer(
+            &data,
+            &frames,
+            &flags,
+            &devicePosition,
+            &qpcPosition100ns
+        );
         if (FAILED(hr)) {
             return hr;
         }
@@ -272,12 +307,36 @@ HRESULT drainCapture(IAudioCaptureClient* captureClient, HANDLE output)
             writeOk = writeAll(output, data, byteCount);
         }
 
+        telemetry.capturedFrames += frames;
+        const bool timestampValid =
+            (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) == 0 &&
+            qpcPosition100ns > 0;
+        const UINT64 frameDuration100ns =
+            (static_cast<UINT64>(frames) * kQpc100nsPerSecond) /
+            kCaptureSampleRate;
+        const UINT64 qpcEnd100ns = qpcPosition100ns + frameDuration100ns;
+        const UINT64 devicePositionEndFrames = devicePosition + frames;
+
         const HRESULT releaseHr = captureClient->ReleaseBuffer(frames);
         if (!writeOk) {
             return HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE);
         }
         if (FAILED(releaseHr)) {
             return releaseHr;
+        }
+
+        if (
+            timestampValid &&
+            (telemetry.lastEmittedQpc100ns == 0 ||
+             qpcEnd100ns - telemetry.lastEmittedQpc100ns >=
+                 kClockTelemetryInterval100ns)
+        ) {
+            emitClock(
+                qpcEnd100ns,
+                devicePositionEndFrames,
+                telemetry.capturedFrames
+            );
+            telemetry.lastEmittedQpc100ns = qpcEnd100ns;
         }
 
         hr = captureClient->GetNextPacketSize(&packetFrames);
@@ -382,6 +441,7 @@ int wmain(int argc, wchar_t** argv)
     );
     std::fflush(stderr);
 
+    ClockTelemetry clockTelemetry;
     HANDLE waitHandles[] = { sampleReady.get(), targetProcess.get() };
     int exitCode = 0;
     while (true) {
@@ -394,7 +454,7 @@ int wmain(int argc, wchar_t** argv)
             exitCode = 1;
             break;
         }
-        hr = drainCapture(captureClient.Get(), output);
+        hr = drainCapture(captureClient.Get(), output, clockTelemetry);
         if (FAILED(hr)) {
             // A broken stdout pipe simply means the parent stopped captions.
             if (hr != HRESULT_FROM_WIN32(ERROR_BROKEN_PIPE) &&
