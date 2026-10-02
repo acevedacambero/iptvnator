@@ -13,14 +13,24 @@ import {
  */
 const EMBEDDED_MPV_TTFF_PROFILE_ENV = 'IPTVNATOR_EMBEDDED_MPV_TTFF_PROFILE';
 
-type EmbeddedMpvTtffProfile = 'baseline' | 'hwdec-off' | 'cache-off';
+type EmbeddedMpvTtffProfile =
+    | 'baseline'
+    | 'hwdec-off'
+    | 'cache-off'
+    | 'probe-nostreams'
+    | 'probe-off';
 
 function resolveTtffDiagnosticOptions(): string[] {
     const raw = (process.env[EMBEDDED_MPV_TTFF_PROFILE_ENV] ?? '')
         .trim()
         .toLowerCase();
     const profile: EmbeddedMpvTtffProfile =
-        raw === 'hwdec-off' || raw === 'cache-off' ? raw : 'baseline';
+        raw === 'hwdec-off' ||
+        raw === 'cache-off' ||
+        raw === 'probe-nostreams' ||
+        raw === 'probe-off'
+            ? raw
+            : 'baseline';
 
     if (profile === 'hwdec-off') {
         // mpv itself defaults to software decoding. IPTVnator currently forces
@@ -32,6 +42,18 @@ function resolveTtffDiagnosticOptions(): string[] {
         // Diagnostic only. If TTFF collapses here, the delay lives in mpv's
         // network/demuxer cache path rather than decoder/video-output setup.
         return ['cache=no'];
+    }
+    if (profile === 'probe-nostreams') {
+        // Keep libavformat stream probing only when opening the source did not
+        // reveal any streams. This is the safer probe A/B: if TTFF collapses,
+        // avformat_find_stream_info() is the dominant startup cost.
+        return ['demuxer-lavf-probe-info=nostreams'];
+    }
+    if (profile === 'probe-off') {
+        // Aggressive diagnostic only. Some sources need stream-info probing and
+        // can fail or lose tracks with this profile. A large TTFF reduction is
+        // therefore evidence about the cause, not a production setting.
+        return ['demuxer-lavf-probe-info=no'];
     }
     return [];
 }
