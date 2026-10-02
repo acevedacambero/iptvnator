@@ -120,6 +120,9 @@ describe('LiveCaptionTranslator', () => {
             normalizeLiveCaptionTranslationBaseUrl('http://localhost:11434/v1/')
         ).toBe('http://localhost:11434/v1');
         expect(
+            normalizeLiveCaptionTranslationBaseUrl('http://[::1]:11434/v1/')
+        ).toBe('http://[::1]:11434/v1');
+        expect(
             normalizeLiveCaptionTranslationBaseUrl('https://example.test/v1/')
         ).toBe('https://example.test/v1');
     });
