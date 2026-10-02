@@ -48,7 +48,7 @@ function nativeDirectories(): string[] {
 }
 
 export function resolveLiveCaptionWhisperHelperPath(): string | null {
-    if (process.platform !== 'win32') {
+    if (process.platform !== 'win32' || process.arch !== 'x64') {
         return null;
     }
     for (const directory of nativeDirectories()) {
@@ -61,18 +61,24 @@ export function resolveLiveCaptionWhisperHelperPath(): string | null {
 }
 
 /**
- * V1 model discovery deliberately avoids downloading a multi-hundred-MB model
- * without explicit user intent. Development can set IPTVNATOR_WHISPER_MODEL;
- * packaged builds also recognise the standard user-data model location.
+ * Development can set IPTVNATOR_WHISPER_MODEL or pass an explicit path.
+ * Packaged builds use the verified on-demand quantized model by default while
+ * retaining older full-model names for existing developer installations.
  */
 export function resolveLiveCaptionWhisperModelPath(
     explicitPath?: string | null
 ): string | null {
+    const modelDirectory = path.join(
+        app.getPath('userData'),
+        'models',
+        'whisper'
+    );
     const candidates = dedupe([
         explicitPath?.trim() || undefined,
         process.env.IPTVNATOR_WHISPER_MODEL?.trim() || undefined,
-        path.join(app.getPath('userData'), 'models', 'whisper', 'ggml-small.en.bin'),
-        path.join(app.getPath('userData'), 'models', 'whisper', 'ggml-base.en.bin'),
+        path.join(modelDirectory, 'ggml-base.en-q5_1.bin'),
+        path.join(modelDirectory, 'ggml-small.en.bin'),
+        path.join(modelDirectory, 'ggml-base.en.bin'),
     ]);
     return candidates.find(readableRegularFile) ?? null;
 }
