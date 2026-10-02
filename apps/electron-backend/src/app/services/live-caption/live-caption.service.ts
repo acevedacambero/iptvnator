@@ -4,6 +4,7 @@ import {
     LiveCaptionState,
     LiveCaptionSupport,
 } from '@iptvnator/shared/interfaces';
+import { AiSyncController } from './ai-sync-controller';
 import { buildAiCaptionAssOverlay } from './ai-caption-ass';
 import { extractNovelCaptionText } from './caption-overlap';
 import { LiveCaptionCcLineBuffer } from './live-caption-cc-line';
@@ -26,12 +27,19 @@ import {
 const MIN_PROCESS_LOOPBACK_BUILD = 20348;
 const MIN_INFERENCE_AUDIO_SECONDS = 1.5;
 const EMPTY_WINDOWS_TO_CLEAR = 3;
+const CAPTURE_SAMPLE_RATE = 16000;
+const QPC_100NS_PER_SECOND = 10_000_000;
 
 type StateListener = (state: LiveCaptionState) => void;
 
 interface PendingTranslation {
     sourceText: string;
     revision: number;
+}
+
+interface CaptureClockTelemetry {
+    qpcEnd100ns: number;
+    capturedFrames: number;
 }
 
 interface ActiveCaptionSession {
@@ -42,6 +50,9 @@ interface ActiveCaptionSession {
     translator: LiveCaptionTranslator | null;
     window: LiveCaptionPcmWindow;
     ccLine: LiveCaptionCcLineBuffer;
+    sync: AiSyncController;
+    latestCaptureClock: CaptureClockTelemetry | null;
+    syncClockProbeInFlight: boolean;
     lastHypothesis: string;
     committedText: string;
     captionRevision: number;
@@ -168,6 +179,9 @@ export class LiveCaptionService {
             translator,
             window: new LiveCaptionPcmWindow(),
             ccLine: new LiveCaptionCcLineBuffer(),
+            sync: new AiSyncController(),
+            latestCaptureClock: null,
+            syncClockProbeInFlight: false,
             lastHypothesis: '',
             committedText: '',
             captionRevision: 0,
@@ -217,6 +231,7 @@ export class LiveCaptionService {
         active.translator?.stop();
         active.window.clear();
         active.ccLine.clear();
+        active.sync.reset();
         active.pendingTranslation = null;
         await liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
@@ -245,6 +260,14 @@ export class LiveCaptionService {
             this.publishActive(active, 'running');
             return;
         }
+        if (event.type === 'clock') {
+            active.latestCaptureClock = {
+                qpcEnd100ns: event.qpcEnd100ns,
+                capturedFrames: event.capturedFrames,
+            };
+            this.observeSyncClock(active, event.qpcEnd100ns);
+            return;
+        }
         if (event.type === 'unsupported') {
             this.fail(
                 active,
@@ -266,6 +289,35 @@ export class LiveCaptionService {
         }
     }
 
+    private observeSyncClock(
+        active: ActiveCaptionSession,
+        captureQpc100ns: number
+    ): void {
+        if (active.syncClockProbeInFlight) {
+            return;
+        }
+        active.syncClockProbeInFlight = true;
+        void liveCaptionMpvOverlayService
+            .getPlaybackPositionSeconds(active.sessionId)
+            .then((mpvPlaybackPtsSeconds) => {
+                if (
+                    !this.isCurrent(active) ||
+                    active.stopping ||
+                    mpvPlaybackPtsSeconds === null
+                ) {
+                    return;
+                }
+                active.sync.observeClock({
+                    captureQpc100ns,
+                    mpvPlaybackPtsSeconds,
+                });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                active.syncClockProbeInFlight = false;
+            });
+    }
+
     private onPcm(active: ActiveCaptionSession, chunk: Buffer): void {
         if (!this.isCurrent(active) || active.stopping) {
             return;
@@ -278,12 +330,37 @@ export class LiveCaptionService {
         ) {
             return;
         }
-        void this.transcribeLatest(active, snapshot);
+        const captureQpc100ns = this.estimateCaptureEndQpc100ns(active);
+        void this.transcribeLatest(active, snapshot, captureQpc100ns);
+    }
+
+    private estimateCaptureEndQpc100ns(
+        active: ActiveCaptionSession
+    ): number | null {
+        const clock = active.latestCaptureClock;
+        if (!clock) {
+            return null;
+        }
+        const receivedFrames = Math.round(
+            active.window.receivedSeconds * CAPTURE_SAMPLE_RATE
+        );
+        const framesAfterClock = receivedFrames - clock.capturedFrames;
+        // stderr and stdout use separate pipes, so a clock event can rarely
+        // arrive just before the PCM bytes it describes. Skip that sample
+        // instead of manufacturing a future audio timestamp.
+        if (framesAfterClock < 0) {
+            return null;
+        }
+        return (
+            clock.qpcEnd100ns +
+            (framesAfterClock * QPC_100NS_PER_SECOND) / CAPTURE_SAMPLE_RATE
+        );
     }
 
     private async transcribeLatest(
         active: ActiveCaptionSession,
-        pcm: Buffer
+        pcm: Buffer,
+        captureQpc100ns: number | null
     ): Promise<void> {
         try {
             const result = await active.whisper.transcribe(pcm);
@@ -291,6 +368,7 @@ export class LiveCaptionService {
                 return;
             }
             active.lastInferenceMs = result.elapsedMs;
+            this.measureCaptionLag(active, captureQpc100ns);
             const text = result.text.replace(/\s+/g, ' ').trim();
             if (!text) {
                 active.emptyWindows += 1;
@@ -340,6 +418,37 @@ export class LiveCaptionService {
                 this.fail(active, error);
             }
         }
+    }
+
+    private measureCaptionLag(
+        active: ActiveCaptionSession,
+        captureQpc100ns: number | null
+    ): void {
+        if (captureQpc100ns === null) {
+            return;
+        }
+        // Measurement must never sit on the critical caption-display path.
+        // Query MPV after ASR returns, record the lag asynchronously, and let
+        // the current English caption continue toward the overlay immediately.
+        void liveCaptionMpvOverlayService
+            .getPlaybackPositionSeconds(active.sessionId)
+            .then((resultPlaybackPtsSeconds) => {
+                if (
+                    !this.isCurrent(active) ||
+                    active.stopping ||
+                    resultPlaybackPtsSeconds === null
+                ) {
+                    return;
+                }
+                const lag = active.sync.recordCaptionResult(
+                    captureQpc100ns,
+                    resultPlaybackPtsSeconds
+                );
+                if (lag !== null) {
+                    this.publishActive(active, 'running');
+                }
+            })
+            .catch(() => undefined);
     }
 
     private async commitCaptionLine(
@@ -460,6 +569,10 @@ export class LiveCaptionService {
         active: ActiveCaptionSession,
         state: 'starting' | 'running'
     ): void {
+        const syncTelemetry = active.sync.snapshot();
+        const hasSyncTelemetry =
+            syncTelemetry.clockAnchorCount > 0 ||
+            syncTelemetry.captionLagSampleCount > 0;
         this.publish({
             state,
             active: true,
@@ -475,6 +588,7 @@ export class LiveCaptionService {
             ...(active.lastTranslationMs !== undefined
                 ? { lastTranslationMs: active.lastTranslationMs }
                 : {}),
+            ...(hasSyncTelemetry ? { syncTelemetry } : {}),
             ...(active.translationError
                 ? { translationError: active.translationError }
                 : {}),
@@ -491,6 +605,7 @@ export class LiveCaptionService {
         active.whisper.stop();
         active.translator?.stop();
         active.ccLine.clear();
+        active.sync.reset();
         active.pendingTranslation = null;
         void liveCaptionMpvOverlayService
             .clearOverlay(active.sessionId)
