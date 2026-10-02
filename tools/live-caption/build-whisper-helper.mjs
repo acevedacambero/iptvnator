@@ -93,6 +93,14 @@ function runCapture(command, args, env = process.env) {
     return String(result.stdout ?? '').trim();
 }
 
+function tryCapture(command, args, env = process.env) {
+    try {
+        return runCapture(command, args, env);
+    } catch {
+        return undefined;
+    }
+}
+
 function findVsWhere() {
     const explicit = process.env.VSWHERE_PATH;
     if (explicit && fs.existsSync(explicit)) {
@@ -151,6 +159,59 @@ function getVisualStudioInfo() {
     return { version, installationPath, major };
 }
 
+function getCMakeCandidates() {
+    const candidates = [];
+    const add = (candidate) => {
+        if (!candidate) {
+            return;
+        }
+        const normalized = String(candidate).trim();
+        if (!normalized || candidates.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+            return;
+        }
+        candidates.push(normalized);
+    };
+
+    add(process.env.CMAKE_EXE);
+
+    const whereOutput = tryCapture('where.exe', ['cmake.exe']);
+    if (whereOutput) {
+        for (const line of whereOutput.split(/\r?\n/)) {
+            add(line);
+        }
+    }
+
+    if (process.env.ProgramFiles) {
+        add(path.join(process.env.ProgramFiles, 'CMake', 'bin', 'cmake.exe'));
+    }
+    if (process.env['ProgramFiles(x86)']) {
+        add(
+            path.join(
+                process.env['ProgramFiles(x86)'],
+                'CMake',
+                'bin',
+                'cmake.exe'
+            )
+        );
+    }
+
+    add('cmake');
+    return candidates;
+}
+
+function inspectCMake(command) {
+    const help = tryCapture(command, ['--help']);
+    const versionText = tryCapture(command, ['--version']);
+    if (!help || !versionText) {
+        return undefined;
+    }
+    return {
+        command,
+        help,
+        version: versionText.split(/\r?\n/)[0].trim(),
+    };
+}
+
 function loadVisualStudioDeveloperEnvironment(installationPath) {
     const vsDevCmd = path.join(
         installationPath,
@@ -165,7 +226,7 @@ function loadVisualStudioDeveloperEnvironment(installationPath) {
     }
 
     const comSpec = process.env.ComSpec || 'cmd.exe';
-    const commandLine = `call "${vsDevCmd}" -arch=x64 -host_arch=x64 >nul && set`;
+    const commandLine = `call "${vsDevCmd}" -arch=x64 -host_arch=x64 && set`;
     const result = spawnSync(comSpec, ['/d', '/s', '/c', commandLine], {
         cwd: workspaceRoot,
         env: process.env,
@@ -175,8 +236,9 @@ function loadVisualStudioDeveloperEnvironment(installationPath) {
         throw result.error;
     }
     if (result.status !== 0) {
+        const detail = String(result.stderr || result.stdout || '').trim();
         throw new Error(
-            `Failed to initialize the Visual Studio x64 developer environment with status ${result.status ?? 1}.`
+            `Failed to initialize the Visual Studio x64 developer environment with status ${result.status ?? 1}${detail ? `: ${detail}` : ''}.`
         );
     }
 
@@ -198,29 +260,36 @@ function loadVisualStudioDeveloperEnvironment(installationPath) {
 
 function resolveBuildStrategy() {
     const visualStudio = getVisualStudioInfo();
-    const cmakeHelp = runCapture('cmake', ['--help']);
     const preferredGenerator =
         visualStudio.major >= 18
             ? 'Visual Studio 18 2026'
             : 'Visual Studio 17 2022';
 
-    if (cmakeHelp.includes(preferredGenerator)) {
+    const inspected = getCMakeCandidates()
+        .map(inspectCMake)
+        .filter(Boolean);
+    const preferredCMake = inspected.find((item) =>
+        item.help.includes(preferredGenerator)
+    );
+
+    if (preferredCMake) {
         log(
-            `Using ${preferredGenerator} for Visual Studio ${visualStudio.version}.`
+            `Using ${preferredCMake.version} at ${preferredCMake.command} with ${preferredGenerator} for Visual Studio ${visualStudio.version}.`
         );
         return {
+            cmake: preferredCMake.command,
             generator: preferredGenerator,
             env: process.env,
             multiConfig: true,
         };
     }
 
-    if (!cmakeHelp.includes('NMake Makefiles')) {
-        const versionText = runCapture('cmake', ['--version'])
-            .split(/\r?\n/)[0]
-            .trim();
+    const fallbackCMake = inspected.find((item) =>
+        item.help.includes('NMake Makefiles')
+    );
+    if (!fallbackCMake) {
         throw new Error(
-            `${preferredGenerator} is not available in ${versionText || 'the current CMake'}, and the NMake Makefiles fallback is also unavailable.`
+            `${preferredGenerator} is not available in any detected CMake installation, and the NMake Makefiles fallback is also unavailable.`
         );
     }
 
@@ -230,11 +299,12 @@ function resolveBuildStrategy() {
     const whereNMake = runCapture('where.exe', ['nmake.exe'], devEnv);
     const whereCl = runCapture('where.exe', ['cl.exe'], devEnv);
     log(
-        `CMake does not provide ${preferredGenerator}; using NMake Makefiles with Visual Studio ${visualStudio.version}.`
+        `${preferredGenerator} was not found in detected CMake installations; using ${fallbackCMake.version} at ${fallbackCMake.command} with NMake Makefiles and Visual Studio ${visualStudio.version}.`
     );
     log(`MSVC compiler: ${whereCl.split(/\r?\n/)[0]}`);
     log(`NMake: ${whereNMake.split(/\r?\n/)[0]}`);
     return {
+        cmake: fallbackCMake.command,
         generator: 'NMake Makefiles',
         env: devEnv,
         multiConfig: false,
@@ -319,7 +389,7 @@ function main() {
     configureArgs.push(
         `-DWHISPER_CPP_ROOT=${sourceRoot.replaceAll('\\', '/')}`
     );
-    run('cmake', configureArgs, strategy.env);
+    run(strategy.cmake, configureArgs, strategy.env);
 
     const buildArgs = [
         '--build',
@@ -331,7 +401,7 @@ function main() {
     if (strategy.multiConfig) {
         buildArgs.splice(2, 0, '--config', 'Release');
     }
-    run('cmake', buildArgs, strategy.env);
+    run(strategy.cmake, buildArgs, strategy.env);
 
     const builtHelper = path.join(
         buildRoot,
