@@ -4,7 +4,7 @@ import {
 } from './ai-caption-ass';
 
 describe('AI caption ASS overlay', () => {
-    it('renders bilingual captions as two ASS events', () => {
+    it('renders bilingual captions as two plain black ASS events', () => {
         const overlay = buildAiCaptionAssOverlay({
             mode: 'bilingual',
             sourceText: 'The Federal Reserve kept rates unchanged.',
@@ -18,9 +18,13 @@ describe('AI caption ASS overlay', () => {
         expect(lines[0]).toContain('\\pos(960,900)');
         expect(lines[1]).toContain('\\pos(960,970)');
         expect(lines[0]).toContain('\\1c&H00000000&');
-        expect(lines[0]).toContain('\\3c&H00FFFFFF&');
         expect(lines[1]).toContain('\\1c&H00000000&');
-        expect(lines[1]).toContain('\\3c&H00FFFFFF&');
+        expect(lines[0]).toContain('\\bord0');
+        expect(lines[1]).toContain('\\bord0');
+        expect(lines[0]).toContain('\\shad0');
+        expect(lines[1]).toContain('\\shad0');
+        expect(lines[0]).not.toContain('\\3c&H00FFFFFF&');
+        expect(lines[1]).not.toContain('\\3c&H00FFFFFF&');
         expect(overlay).toMatchObject({
             playResX: 1920,
             playResY: 1080,
