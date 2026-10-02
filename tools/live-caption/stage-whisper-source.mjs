@@ -11,6 +11,7 @@ const destination = path.join(
     'live-caption',
     'whisper.cpp'
 );
+const stampPath = path.join(destination, 'iptvnator-source-revision.json');
 
 function run(command, args, options = {}) {
     const result = spawnSync(command, args, {
@@ -32,7 +33,26 @@ function run(command, args, options = {}) {
     return result.stdout?.trim() ?? '';
 }
 
-function currentRevision() {
+function readVerifiedStamp() {
+    if (!fs.existsSync(stampPath)) {
+        return null;
+    }
+    try {
+        const stamp = JSON.parse(fs.readFileSync(stampPath, 'utf8'));
+        return stamp?.repository === WHISPER_CPP_SOURCE.repository &&
+            stamp?.tag === WHISPER_CPP_SOURCE.tag &&
+            stamp?.commit === WHISPER_CPP_SOURCE.commit &&
+            fs.existsSync(path.join(destination, 'CMakeLists.txt')) &&
+            fs.existsSync(path.join(destination, 'include', 'whisper.h')) &&
+            fs.existsSync(path.join(destination, 'ggml', 'CMakeLists.txt'))
+            ? stamp.commit
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function gitRevision() {
     if (!fs.existsSync(path.join(destination, '.git'))) {
         return null;
     }
@@ -42,8 +62,7 @@ function currentRevision() {
     });
 }
 
-const current = currentRevision();
-if (current === WHISPER_CPP_SOURCE.commit) {
+if (readVerifiedStamp() === WHISPER_CPP_SOURCE.commit) {
     process.stdout.write(
         `[live-caption] whisper.cpp ${WHISPER_CPP_SOURCE.tag} already staged at ${destination}\n`
     );
@@ -63,7 +82,7 @@ run('git', [
     destination,
 ]);
 
-const revision = currentRevision();
+const revision = gitRevision();
 if (revision !== WHISPER_CPP_SOURCE.commit) {
     fs.rmSync(destination, { recursive: true, force: true });
     throw new Error(
@@ -75,7 +94,7 @@ if (revision !== WHISPER_CPP_SOURCE.commit) {
 // The exact revision remains in the checked-in pin and in the generated stamp.
 fs.rmSync(path.join(destination, '.git'), { recursive: true, force: true });
 fs.writeFileSync(
-    path.join(destination, 'iptvnator-source-revision.json'),
+    stampPath,
     `${JSON.stringify(
         {
             repository: WHISPER_CPP_SOURCE.repository,
