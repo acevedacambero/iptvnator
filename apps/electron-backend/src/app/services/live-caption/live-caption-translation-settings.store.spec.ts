@@ -91,7 +91,22 @@ describe('LiveCaptionTranslationSettingsStore', () => {
         });
     });
 
-    it('drops an old key when the provider endpoint changes', () => {
+    it('rejects enabled translation until both model and key are configured', () => {
+        expect(() => store.update({ enabled: true })).toThrow(
+            'Translation model is required before enabling.'
+        );
+        expect(() =>
+            store.update({ enabled: true, model: 'translation-model' })
+        ).toThrow('Translation API key is required before enabling.');
+
+        expect(store.getPublicSettings()).toMatchObject({
+            enabled: false,
+            hasApiKey: false,
+            model: '',
+        });
+    });
+
+    it('rejects an enabled endpoint change without a replacement key atomically', () => {
         store.update({
             enabled: true,
             baseUrl: 'https://first.example/v1',
@@ -99,17 +114,36 @@ describe('LiveCaptionTranslationSettingsStore', () => {
             apiKey: 'first-secret',
         });
 
+        expect(() =>
+            store.update({ baseUrl: 'https://second.example/v1' })
+        ).toThrow('Translation API key is required before enabling.');
+
+        expect(store.resolveForSession()).toMatchObject({
+            enabled: true,
+            baseUrl: 'https://first.example/v1',
+            apiKey: 'first-secret',
+        });
+    });
+
+    it('drops an old key when a disabled configuration changes endpoint', () => {
+        store.update({
+            enabled: true,
+            baseUrl: 'https://first.example/v1',
+            model: 'translation-model',
+            apiKey: 'first-secret',
+        });
+        store.update({ enabled: false });
+
         const changed = store.update({
             baseUrl: 'https://second.example/v1',
         });
 
-        expect(changed.baseUrl).toBe('https://second.example/v1');
-        expect(changed.hasApiKey).toBe(false);
-        expect(store.resolveForSession()).toMatchObject({
-            enabled: true,
+        expect(changed).toMatchObject({
+            enabled: false,
             baseUrl: 'https://second.example/v1',
+            hasApiKey: false,
         });
-        expect(store.resolveForSession()).not.toHaveProperty('apiKey');
+        expect(store.resolveForSession()).toBeUndefined();
     });
 
     it('accepts a new key atomically with an endpoint change', () => {
