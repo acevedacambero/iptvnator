@@ -1,6 +1,10 @@
-import type { LiveCaptionTranslationOptions } from '@iptvnator/shared/interfaces';
+import type {
+    LiveCaptionTranslationOptions,
+    LiveCaptionTranslationProvider,
+} from '@iptvnator/shared/interfaces';
 
-const DEFAULT_API_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_GOOGLE_API_BASE_URL = 'https://translate.googleapis.com';
 const DEFAULT_TARGET_LANGUAGE = 'Simplified Chinese';
 const DEFAULT_TIMEOUT_MS = 8000;
 const MIN_TIMEOUT_MS = 1000;
@@ -11,8 +15,17 @@ export interface LiveCaptionTranslationResult {
     elapsedMs: number;
 }
 
-export function normalizeLiveCaptionTranslationBaseUrl(value?: string): string {
-    const raw = value?.trim() || DEFAULT_API_BASE_URL;
+function defaultBaseUrl(provider: LiveCaptionTranslationProvider): string {
+    return provider === 'google-free'
+        ? DEFAULT_GOOGLE_API_BASE_URL
+        : DEFAULT_OPENAI_API_BASE_URL;
+}
+
+export function normalizeLiveCaptionTranslationBaseUrl(
+    value?: string,
+    provider: LiveCaptionTranslationProvider = 'openai-compatible'
+): string {
+    const raw = value?.trim() || defaultBaseUrl(provider);
     let parsed: URL;
     try {
         parsed = new URL(raw);
@@ -23,7 +36,10 @@ export function normalizeLiveCaptionTranslationBaseUrl(value?: string): string {
     const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(
         parsed.hostname.toLowerCase()
     );
-    if (parsed.protocol !== 'https:' && !(localHost && parsed.protocol === 'http:')) {
+    if (
+        parsed.protocol !== 'https:' &&
+        !(localHost && parsed.protocol === 'http:')
+    ) {
         throw new Error(
             'Translation API URL must use HTTPS (HTTP is allowed only for localhost).'
         );
@@ -46,7 +62,7 @@ function normalizeTimeout(value?: number): number {
     );
 }
 
-function readMessageText(payload: unknown): string {
+function readOpenAiMessageText(payload: unknown): string {
     if (!payload || typeof payload !== 'object') {
         return '';
     }
@@ -77,13 +93,53 @@ function readMessageText(payload: unknown): string {
         .trim();
 }
 
+function readGoogleTranslation(payload: unknown): string {
+    if (!Array.isArray(payload) || !Array.isArray(payload[0])) {
+        return '';
+    }
+    return (payload[0] as unknown[])
+        .map((segment) => {
+            if (!Array.isArray(segment)) {
+                return '';
+            }
+            return typeof segment[0] === 'string' ? segment[0] : '';
+        })
+        .join('')
+        .trim();
+}
+
+function googleTargetLanguageCode(value: string): string {
+    const normalized = value.trim().toLowerCase();
+    if (
+        !normalized ||
+        normalized === 'simplified chinese' ||
+        normalized === 'chinese (simplified)' ||
+        normalized === 'chinese simplified' ||
+        normalized === 'zh-cn' ||
+        normalized === 'zh_hans' ||
+        normalized === 'zh-hans'
+    ) {
+        return 'zh-CN';
+    }
+    if (/^[a-z]{2,3}(?:-[a-z]{2,4})?$/i.test(value.trim())) {
+        return value.trim();
+    }
+    return 'zh-CN';
+}
+
 /**
- * One-at-a-time OpenAI-compatible translator for live captions.
+ * One-at-a-time translator for live captions.
  *
- * The client intentionally owns no queue. Callers use `busy` to drop stale
- * intermediate requests and translate the newest caption snapshot instead.
+ * `google-free` uses Google's public web translation endpoint without a key.
+ * It is intentionally treated as best-effort: callers keep showing English if
+ * the service is rate-limited or unavailable. `openai-compatible` remains as
+ * an optional provider for users who prefer a keyed model API.
+ *
+ * The client owns no queue. Callers use `busy` to drop stale intermediate
+ * requests and translate the newest caption snapshot instead.
  */
 export class LiveCaptionTranslator {
+    private readonly provider: LiveCaptionTranslationProvider;
     private readonly baseUrl: string;
     private readonly apiKey: string;
     private readonly model: string;
@@ -96,21 +152,30 @@ export class LiveCaptionTranslator {
         if (options.enabled === false) {
             throw new Error('Live-caption translation is disabled.');
         }
-        if ((options.provider ?? 'openai-compatible') !== 'openai-compatible') {
+        this.provider = options.provider ?? 'google-free';
+        if (
+            this.provider !== 'google-free' &&
+            this.provider !== 'openai-compatible'
+        ) {
             throw new Error('Unsupported live-caption translation provider.');
         }
+        this.baseUrl = normalizeLiveCaptionTranslationBaseUrl(
+            options.baseUrl,
+            this.provider
+        );
         this.apiKey = options.apiKey?.trim() ?? '';
         this.model = options.model?.trim() ?? '';
-        this.baseUrl = normalizeLiveCaptionTranslationBaseUrl(options.baseUrl);
         this.targetLanguage =
             options.targetLanguage?.trim() || DEFAULT_TARGET_LANGUAGE;
         this.timeoutMs = normalizeTimeout(options.timeoutMs);
 
-        if (!this.apiKey) {
-            throw new Error('Translation API key is required.');
-        }
-        if (!this.model) {
-            throw new Error('Translation model is required.');
+        if (this.provider === 'openai-compatible') {
+            if (!this.apiKey) {
+                throw new Error('Translation API key is required.');
+            }
+            if (!this.model) {
+                throw new Error('Translation model is required.');
+            }
         }
     }
 
@@ -140,39 +205,19 @@ export class LiveCaptionTranslator {
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
         try {
-            const response = await fetch(`${this.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: [
-                        {
-                            role: 'system',
-                            content:
-                                `Translate live spoken English into concise, natural ${this.targetLanguage}. ` +
-                                'Preserve names, numbers, acronyms, and meaning. Return only the translation.',
-                        },
-                        { role: 'user', content: text },
-                    ],
-                }),
-                signal: controller.signal,
-            });
-            if (!response.ok) {
-                throw new Error(
-                    `Translation request failed with HTTP ${response.status}.`
-                );
-            }
-
-            const translated = readMessageText(await response.json());
+            const translated =
+                this.provider === 'google-free'
+                    ? await this.translateWithGoogle(text, controller.signal)
+                    : await this.translateWithOpenAi(text, controller.signal);
             if (!translated) {
                 throw new Error('Translation provider returned an empty response.');
             }
             return {
                 text: translated,
-                elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+                elapsedMs: Math.max(
+                    0,
+                    Math.round(performance.now() - startedAt)
+                ),
             };
         } catch (error) {
             if (controller.signal.aborted) {
@@ -188,5 +233,64 @@ export class LiveCaptionTranslator {
             }
             this.inFlight = false;
         }
+    }
+
+    private async translateWithGoogle(
+        text: string,
+        signal: AbortSignal
+    ): Promise<string> {
+        const url = new URL(`${this.baseUrl}/translate_a/single`);
+        url.searchParams.set('client', 'gtx');
+        url.searchParams.set('sl', 'en');
+        url.searchParams.set(
+            'tl',
+            googleTargetLanguageCode(this.targetLanguage)
+        );
+        url.searchParams.set('dt', 't');
+        url.searchParams.set('q', text);
+
+        const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+            signal,
+        });
+        if (!response.ok) {
+            throw new Error(
+                `Google translation request failed with HTTP ${response.status}.`
+            );
+        }
+        return readGoogleTranslation(await response.json());
+    }
+
+    private async translateWithOpenAi(
+        text: string,
+        signal: AbortSignal
+    ): Promise<string> {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: this.model,
+                messages: [
+                    {
+                        role: 'system',
+                        content:
+                            `Translate live spoken English into concise, natural ${this.targetLanguage}. ` +
+                            'Preserve names, numbers, acronyms, and meaning. Return only the translation.',
+                    },
+                    { role: 'user', content: text },
+                ],
+            }),
+            signal,
+        });
+        if (!response.ok) {
+            throw new Error(
+                `Translation request failed with HTTP ${response.status}.`
+            );
+        }
+        return readOpenAiMessageText(await response.json());
     }
 }
