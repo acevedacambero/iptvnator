@@ -26,6 +26,7 @@ export interface LiveCaptionWhisperResult {
 }
 
 interface PendingInference {
+    requestId: number;
     resolve: (value: LiveCaptionWhisperResult) => void;
     reject: (error: Error) => void;
     timer: NodeJS.Timeout;
@@ -86,7 +87,10 @@ export class LiveCaptionWhisperClient {
         this.stderrBuffer = '';
         const args = ['--model', modelPath];
         if (Number.isFinite(options.threads) && (options.threads ?? 0) > 0) {
-            args.push('--threads', String(Math.max(1, Math.round(options.threads!))));
+            args.push(
+                '--threads',
+                String(Math.max(1, Math.round(options.threads as number)))
+            );
         }
         const child = spawn(helperPath, args, {
             windowsHide: true,
@@ -104,7 +108,9 @@ export class LiveCaptionWhisperClient {
             );
             this.stop();
         }, START_TIMEOUT_MS);
-        this.readyPromise.finally(() => clearTimeout(startTimer)).catch(() => undefined);
+        this.readyPromise
+            .finally(() => clearTimeout(startTimer))
+            .catch(() => undefined);
 
         child.stdout?.setEncoding('utf8');
         child.stdout?.on('data', (chunk: string) => this.consumeStdout(chunk));
@@ -140,10 +146,18 @@ export class LiveCaptionWhisperClient {
         if (this.pending) {
             throw new Error('Whisper inference is already in flight.');
         }
-        if (pcm.length === 0 || pcm.length > MAX_PCM_BYTES || pcm.length % 2 !== 0) {
+        if (
+            pcm.length === 0 ||
+            pcm.length > MAX_PCM_BYTES ||
+            pcm.length % 2 !== 0
+        ) {
             throw new Error('Whisper PCM payload size is invalid.');
         }
-        await this.readyPromise;
+        const ready = this.readyPromise;
+        if (!ready) {
+            throw new Error('Whisper worker has not been started.');
+        }
+        await ready;
 
         const requestId = this.nextRequestId++ >>> 0;
         const header = Buffer.allocUnsafe(8);
@@ -152,14 +166,14 @@ export class LiveCaptionWhisperClient {
 
         return new Promise<LiveCaptionWhisperResult>((resolve, reject) => {
             const timer = setTimeout(() => {
-                if (this.pending) {
+                if (this.pending?.requestId === requestId) {
                     this.pending = null;
                 }
                 reject(new Error('Whisper inference timed out.'));
             }, INFERENCE_TIMEOUT_MS);
-            this.pending = { resolve, reject, timer };
+            this.pending = { requestId, resolve, reject, timer };
             this.child!.stdin!.write(Buffer.concat([header, pcm]), (error) => {
-                if (error) {
+                if (error && this.pending?.requestId === requestId) {
                     this.failPending(error);
                 }
             });
@@ -169,10 +183,12 @@ export class LiveCaptionWhisperClient {
     stop(): void {
         const child = this.child;
         this.child = null;
+        const stopError = new Error('Whisper worker stopped.');
+        this.failReady(stopError);
         this.readyPromise = null;
-        this.readyResolve = null;
-        this.readyReject = null;
-        this.failPending(new Error('Whisper worker stopped.'));
+        this.failPending(stopError);
+        this.stdoutBuffer = '';
+        this.stderrBuffer = '';
         if (!child) {
             return;
         }
@@ -214,6 +230,9 @@ export class LiveCaptionWhisperClient {
             return;
         }
         if (!('id' in message) || !this.pending) {
+            return;
+        }
+        if (message.id !== this.pending.requestId) {
             return;
         }
         const pending = this.pending;
