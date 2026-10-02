@@ -45,8 +45,14 @@ export class EmbeddedMpvLiveCaptionController {
             return state.error;
         }
         if (state.active) {
-            return state.state === 'starting'
-                ? 'Starting AI live captions…'
+            if (state.state === 'starting') {
+                return 'Starting AI live captions…';
+            }
+            if (state.translationError) {
+                return `AI captions are running in English; translation is unavailable: ${state.translationError}`;
+            }
+            return state.lastTranslatedText
+                ? 'Stop AI bilingual live captions'
                 : 'Stop AI live captions';
         }
         const support = this.support();
