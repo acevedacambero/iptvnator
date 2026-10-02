@@ -68,14 +68,15 @@ function Get-NodeArch {
     return $arch
 }
 
-function Assert-CMakeVisualStudioGenerator {
+function Assert-CMakeBuildPath {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
         throw 'Visual Studio Build Tools detection failed because vswhere.exe is missing.'
     }
 
     $installationVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Workload.VCTools -property installationVersion).Trim()
-    if (-not $installationVersion) {
+    $installationPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath).Trim()
+    if (-not $installationVersion -or -not $installationPath) {
         throw 'Visual Studio Build Tools with the C++ workload was not found.'
     }
 
@@ -90,14 +91,22 @@ function Assert-CMakeVisualStudioGenerator {
     if (-not $expectedGenerator) {
         throw "Unsupported Visual Studio major version $vsMajor ($installationVersion)."
     }
-    if ($cmakeHelp -notmatch [Regex]::Escape($expectedGenerator)) {
-        if ($vsMajor -eq 18) {
-            throw "Installed Visual Studio is 18.x (2026), but this CMake does not provide '$expectedGenerator'. Install CMake 4.2 or newer, reopen PowerShell, and rerun the smoke harness."
-        }
-        throw "This CMake installation does not provide the required generator '$expectedGenerator'."
+
+    if ($cmakeHelp -match [Regex]::Escape($expectedGenerator)) {
+        Write-Host "  OK  CMake generator: $expectedGenerator (Visual Studio $installationVersion)"
+        return
     }
 
-    Write-Host "  OK  CMake generator: $expectedGenerator (Visual Studio $installationVersion)"
+    $vsDevCmd = Join-Path $installationPath 'Common7\Tools\VsDevCmd.bat'
+    if (
+        $cmakeHelp -match [Regex]::Escape('NMake Makefiles') -and
+        (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)
+    ) {
+        Write-Host "  OK  CMake fallback: NMake Makefiles via Visual Studio $installationVersion"
+        return
+    }
+
+    throw "CMake cannot build with Visual Studio $installationVersion: neither '$expectedGenerator' nor the NMake Makefiles fallback is available."
 }
 
 if ($env:OS -ne 'Windows_NT') {
@@ -115,7 +124,7 @@ foreach ($command in @('node', 'pnpm', 'git', 'cmake')) {
         throw "Required command is not on PATH: $command"
     }
 }
-Assert-CMakeVisualStudioGenerator
+Assert-CMakeBuildPath
 
 $buildNumber = Get-WindowsBuildNumber
 if ($buildNumber -lt 20348) {
