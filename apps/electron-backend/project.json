@@ -29,10 +29,21 @@
                 "command": "node apps/electron-backend/build-embedded-mpv.js"
             }
         },
+        "build-live-caption-whisper": {
+            "dependsOn": ["electron-backend:build-embedded-mpv"],
+            "executor": "nx:run-commands",
+            "cache": false,
+            "outputs": [
+                "{workspaceRoot}/apps/electron-backend/native/build/Release/iptvnator_whisper_helper.exe"
+            ],
+            "options": {
+                "command": "node tools/live-caption/build-whisper-helper.mjs"
+            }
+        },
         "build": {
             "dependsOn": [
                 "electron-backend:build-worker",
-                "electron-backend:build-embedded-mpv",
+                "electron-backend:build-live-caption-whisper",
                 {
                     "projects": ["web", "remote-control-web"],
                     "target": "build"
@@ -47,7 +58,8 @@
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.cjs",
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.d.cts",
                 "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.cjs",
-                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts"
+                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts",
+                "{workspaceRoot}/tools/live-caption/**"
             ],
             "options": {
                 "outputPath": "dist/apps/electron-backend",
@@ -56,6 +68,10 @@
                     {
                         "entryName": "main.app",
                         "entryPath": "apps/electron-backend/src/main.ts"
+                    },
+                    {
+                        "entryName": "live-caption.preload",
+                        "entryPath": "apps/electron-backend/src/live-caption.preload.ts"
                     }
                 ],
                 "tsConfig": "apps/electron-backend/tsconfig.app.json",
@@ -113,7 +129,7 @@
         "build-performance": {
             "dependsOn": [
                 "electron-backend:build-worker-performance",
-                "electron-backend:build-embedded-mpv",
+                "electron-backend:build-live-caption-whisper",
                 {
                     "projects": ["web", "remote-control-web"],
                     "target": "build-performance"
@@ -127,7 +143,7 @@
         "build-e2e": {
             "dependsOn": [
                 "electron-backend:build-worker",
-                "electron-backend:build-embedded-mpv",
+                "electron-backend:build-live-caption-whisper",
                 {
                     "projects": ["web"],
                     "target": "build-e2e"
@@ -146,7 +162,8 @@
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.cjs",
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.d.cts",
                 "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.cjs",
-                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts"
+                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts",
+                "{workspaceRoot}/tools/live-caption/**"
             ],
             "options": {
                 "outputPath": "dist/apps/electron-backend",
@@ -155,6 +172,10 @@
                     {
                         "entryName": "main.app",
                         "entryPath": "apps/electron-backend/src/main.ts"
+                    },
+                    {
+                        "entryName": "live-caption.preload",
+                        "entryPath": "apps/electron-backend/src/live-caption.preload.ts"
                     }
                 ],
                 "tsConfig": "apps/electron-backend/tsconfig.app.json",
@@ -193,7 +214,7 @@
         "serve-electron": {
             "dependsOn": [
                 "electron-backend:build-worker",
-                "electron-backend:build-embedded-mpv"
+                "electron-backend:build-live-caption-whisper"
             ],
             "executor": "nx-electron:execute",
             "options": {
@@ -215,7 +236,11 @@
                     {
                         "from": "electron-backend",
                         "to": "electron-backend",
-                        "filter": ["main.app.js", "deferred-events.js"]
+                        "filter": [
+                            "main.app.js",
+                            "deferred-events.js",
+                            "live-caption.preload.js"
+                        ]
                     }
                 ],
                 "sourcePath": "dist/apps",
@@ -236,7 +261,11 @@
                     {
                         "from": "electron-backend",
                         "to": "electron-backend",
-                        "filter": ["main.app.js", "deferred-events.js"]
+                        "filter": [
+                            "main.app.js",
+                            "deferred-events.js",
+                            "live-caption.preload.js"
+                        ]
                     }
                 ],
                 "sourcePath": "dist/apps",
@@ -267,7 +296,8 @@
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.cjs",
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.d.cts",
                 "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.cjs",
-                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts"
+                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts",
+                "{workspaceRoot}/tools/live-caption/**"
             ],
             "command": "eslint \"apps/electron-backend/**/*.ts\" \"apps/electron-backend/src/app/services/embedded-mpv-frame-copy-runtime.ts\" \"apps/electron-backend/src/app/services/embedded-mpv-frame-copy-runtime/**/*.ts\""
         },
@@ -281,7 +311,8 @@
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.cjs",
                 "{workspaceRoot}/tools/embedded-mpv/linux-source-archive-contract.d.cts",
                 "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.cjs",
-                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts"
+                "{workspaceRoot}/tools/embedded-mpv/runtime-probe-contract.d.cts",
+                "{workspaceRoot}/tools/live-caption/**"
             ],
             "options": {
                 "jestConfig": "apps/electron-backend/jest.config.ts"

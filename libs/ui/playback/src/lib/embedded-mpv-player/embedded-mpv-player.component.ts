@@ -36,6 +36,7 @@ import { EmbeddedMpvControlsAdapter } from './embedded-mpv-controls.adapter';
 import { EmbeddedMpvDockPanelComponent } from './embedded-mpv-dock-panel.component';
 import { EmbeddedMpvDockPanelState } from './embedded-mpv-dock-panels';
 import { EmbeddedMpvLegacyInteractions } from './embedded-mpv-legacy-interactions';
+import { EmbeddedMpvLiveCaptionController } from './embedded-mpv-live-caption.controller';
 import { EmbeddedMpvOverlayVisibilityService } from './embedded-mpv-overlay-visibility.service';
 import { EmbeddedMpvSessionController } from './embedded-mpv-session-controller';
 import { EmbeddedMpvShortcuts } from './embedded-mpv-shortcuts';
@@ -126,6 +127,7 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
     private readonly shortcuts = new EmbeddedMpvShortcuts();
     readonly menus = new EmbeddedMpvMenuState();
     readonly feedback = new EmbeddedMpvFeedback();
+    readonly liveCaptions = new EmbeddedMpvLiveCaptionController();
     readonly dockPanels: EmbeddedMpvDockPanelState;
 
     readonly viewport = viewChild<ElementRef<HTMLDivElement>>('viewport');
@@ -165,6 +167,18 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
                 screenshot: false,
                 recording: false,
             }
+    );
+    readonly showAiCaptions = computed(
+        () =>
+            this.capabilities().aiCaptionOverlay === true &&
+            this.liveCaptions.bridgeAvailable
+    );
+    readonly canToggleAiCaptions = computed(
+        () =>
+            this.showAiCaptions() &&
+            Boolean(this.controller.sessionId()) &&
+            !this.liveCaptions.starting() &&
+            (this.liveCaptions.available() || this.liveCaptions.active())
     );
     readonly isLoading = computed(
         () =>
@@ -616,6 +630,7 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
     ngOnDestroy(): void {
         this.shortcuts.detach();
         this.feedback.dispose();
+        this.liveCaptions.dispose();
         if (typeof document !== 'undefined') {
             document.removeEventListener(
                 'fullscreenchange',
@@ -641,6 +656,12 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
     async togglePaused(): Promise<void> {
         this.legacyInteractions.revealControls();
         await this.controller.togglePaused();
+    }
+
+    async toggleAiCaptions(): Promise<void> {
+        this.legacyInteractions.revealControls(false);
+        await this.liveCaptions.toggle(this.controller.sessionId());
+        this.legacyInteractions.scheduleControlsHide();
     }
 
     async toggleFullscreen(): Promise<void> {

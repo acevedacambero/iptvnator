@@ -11,6 +11,18 @@ export interface EmbeddedMpvBounds {
     height: number;
 }
 
+/**
+ * ASS payload rendered by mpv's `osd-overlay` command. The overlay is kept
+ * separate from mpv subtitle tracks so AI captions never consume or replace
+ * the user's selected `sid` track.
+ */
+export interface EmbeddedMpvAiCaptionOverlay {
+    assEvents: string;
+    playResX?: number;
+    playResY?: number;
+    z?: number;
+}
+
 export interface EmbeddedMpvCapabilities {
     subtitles: boolean;
     playbackSpeed: boolean;
@@ -23,6 +35,8 @@ export interface EmbeddedMpvCapabilities {
     subtitleDelay?: boolean;
     /** Adjusting `sub-scale`/`sub-color` at runtime (frame-copy engine). */
     subtitleStyle?: boolean;
+    /** Persistent custom ASS overlay used by the Windows AI-caption pipeline. */
+    aiCaptionOverlay?: boolean;
 }
 
 /**

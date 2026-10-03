@@ -1,0 +1,5 @@
+export const WHISPER_CPP_SOURCE = Object.freeze({
+    repository: 'https://github.com/ggml-org/whisper.cpp.git',
+    tag: 'v1.9.4',
+    commit: '927cfce34f31707e17f2bff35c349632fb9e2c3a',
+});

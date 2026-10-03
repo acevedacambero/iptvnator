@@ -399,6 +399,29 @@
                         </button>
                     }
 
+                    @if (showAiCaptions()) {
+                        <button
+                            mat-icon-button
+                            type="button"
+                            class="embedded-mpv-player__control-button"
+                            data-test-id="embedded-mpv-ai-captions"
+                            [disabled]="!canToggleAiCaptions()"
+                            [attr.aria-pressed]="liveCaptions.active()"
+                            [attr.aria-label]="liveCaptions.tooltip()"
+                            [matTooltip]="liveCaptions.tooltip()"
+                            matTooltipPosition="above"
+                            (click)="toggleAiCaptions()"
+                        >
+                            <mat-icon>{{
+                                liveCaptions.starting()
+                                    ? 'hourglass_top'
+                                    : liveCaptions.active()
+                                      ? 'closed_caption'
+                                      : 'auto_awesome'
+                            }}</mat-icon>
+                        </button>
+                    }
+
                     @if (capabilities().playbackSpeed) {
                         <button
                             mat-icon-button

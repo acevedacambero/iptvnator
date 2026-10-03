@@ -6,6 +6,59 @@ import {
 } from './store.service';
 
 /**
+ * Temporary, opt-in startup-latency profiles used to isolate the Windows
+ * native-view 20-30 second TTFF regression. They are deliberately selected
+ * by an environment variable rather than persisted settings, so one packaged
+ * build can run repeatable A/B tests without changing normal playback.
+ */
+const EMBEDDED_MPV_TTFF_PROFILE_ENV = 'IPTVNATOR_EMBEDDED_MPV_TTFF_PROFILE';
+
+type EmbeddedMpvTtffProfile =
+    | 'baseline'
+    | 'hwdec-off'
+    | 'cache-off'
+    | 'probe-nostreams'
+    | 'probe-off';
+
+function resolveTtffDiagnosticOptions(): string[] {
+    const raw = (process.env[EMBEDDED_MPV_TTFF_PROFILE_ENV] ?? '')
+        .trim()
+        .toLowerCase();
+    const profile: EmbeddedMpvTtffProfile =
+        raw === 'hwdec-off' ||
+        raw === 'cache-off' ||
+        raw === 'probe-nostreams' ||
+        raw === 'probe-off'
+            ? raw
+            : 'baseline';
+
+    if (profile === 'hwdec-off') {
+        // mpv itself defaults to software decoding. IPTVnator currently forces
+        // hwdec=auto-safe on Windows, so this isolates D3D11/hardware-decoder
+        // negotiation without changing any other startup behavior.
+        return ['hwdec=no'];
+    }
+    if (profile === 'cache-off') {
+        // Diagnostic only. If TTFF collapses here, the delay lives in mpv's
+        // network/demuxer cache path rather than decoder/video-output setup.
+        return ['cache=no'];
+    }
+    if (profile === 'probe-nostreams') {
+        // Keep libavformat stream probing only when opening the source did not
+        // reveal any streams. This is the safer probe A/B: if TTFF collapses,
+        // avformat_find_stream_info() is the dominant startup cost.
+        return ['demuxer-lavf-probe-info=nostreams'];
+    }
+    if (profile === 'probe-off') {
+        // Aggressive diagnostic only. Some sources need stream-info probing and
+        // can fail or lose tracks with this profile. A large TTFF reduction is
+        // therefore evidence about the cause, not a production setting.
+        return ['demuxer-lavf-probe-info=no'];
+    }
+    return [];
+}
+
+/**
  * Per-session knobs captured when an embedded MPV session is created. They
  * come from the main-process settings mirror (see `store.service.ts`), so a
  * settings change applies to the next session, never to a running one.
@@ -25,10 +78,20 @@ export interface EmbeddedMpvSessionOptions {
 }
 
 export function readEmbeddedMpvSessionOptions(): EmbeddedMpvSessionOptions {
+    const configuredOptions = resolveEmbeddedMpvSessionOptionArguments(
+        store.get(EMBEDDED_MPV_EXTRA_OPTIONS, '')
+    );
+    const diagnosticOptions = resolveTtffDiagnosticOptions();
+    if (diagnosticOptions.length > 0) {
+        console.warn(
+            `[Embedded MPV][TTFF] diagnostic profile ${process.env[EMBEDDED_MPV_TTFF_PROFILE_ENV]} active: ${diagnosticOptions.join(', ')}`
+        );
+    }
+
     return {
-        extraOptions: resolveEmbeddedMpvSessionOptionArguments(
-            store.get(EMBEDDED_MPV_EXTRA_OPTIONS, '')
-        ),
+        // Diagnostic options go last on purpose: they must override both the
+        // engine built-ins and any persisted line for this one A/B run.
+        extraOptions: [...configuredOptions, ...diagnosticOptions],
         autoReconnect: store.get(EMBEDDED_MPV_AUTO_RECONNECT, true) !== false,
     };
 }
