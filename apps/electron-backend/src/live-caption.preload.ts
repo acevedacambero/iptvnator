@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+    LiveCaptionDisplaySettings,
     LiveCaptionStartOptions,
     LiveCaptionState,
     LiveCaptionSupport,
@@ -7,6 +8,8 @@ import type {
     LiveCaptionTranslationSettingsUpdate,
 } from '@iptvnator/shared/interfaces';
 import {
+    LIVE_CAPTION_DISPLAY_SETTINGS_GET,
+    LIVE_CAPTION_DISPLAY_SETTINGS_UPDATE,
     LIVE_CAPTION_GET_STATE,
     LIVE_CAPTION_GET_SUPPORT,
     LIVE_CAPTION_START,
@@ -17,6 +20,10 @@ import {
 } from '@iptvnator/shared/interfaces';
 
 export interface LiveCaptionPreloadApi {
+    getDisplaySettings: () => Promise<LiveCaptionDisplaySettings>;
+    updateDisplaySettings: (
+        settings: LiveCaptionDisplaySettings
+    ) => Promise<LiveCaptionDisplaySettings>;
     getSupport: () => Promise<LiveCaptionSupport>;
     getState: () => Promise<LiveCaptionState>;
     start: (
@@ -28,13 +35,15 @@ export interface LiveCaptionPreloadApi {
     updateTranslationSettings: (
         patch: LiveCaptionTranslationSettingsUpdate
     ) => Promise<LiveCaptionTranslationSettings>;
-    onStateChanged: (
-        callback: (state: LiveCaptionState) => void
-    ) => () => void;
+    onStateChanged: (callback: (state: LiveCaptionState) => void) => () => void;
 }
 
 if (process.isMainFrame) {
     const api: LiveCaptionPreloadApi = {
+        getDisplaySettings: () =>
+            ipcRenderer.invoke(LIVE_CAPTION_DISPLAY_SETTINGS_GET),
+        updateDisplaySettings: (settings) =>
+            ipcRenderer.invoke(LIVE_CAPTION_DISPLAY_SETTINGS_UPDATE, settings),
         getSupport: () => ipcRenderer.invoke(LIVE_CAPTION_GET_SUPPORT),
         getState: () => ipcRenderer.invoke(LIVE_CAPTION_GET_STATE),
         start: (sessionId, options) =>

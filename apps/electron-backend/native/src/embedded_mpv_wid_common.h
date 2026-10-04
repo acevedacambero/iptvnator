@@ -671,6 +671,10 @@ std::vector<std::string> buildLinuxMpvArguments(
     appendLinuxMpvOption(arguments, "force-media-title", title);
     appendLinuxMpvOption(arguments, "user-agent", userAgent);
     appendLinuxMpvOption(arguments, "referrer", referer);
+    if (playback.Has("subtitleTrackId") && playback.Get("subtitleTrackId").IsNumber()) {
+        const int64_t trackId = playback.Get("subtitleTrackId").As<Napi::Number>().Int64Value();
+        appendLinuxMpvOption(arguments, "sid", trackId < 0 ? "no" : std::to_string(trackId));
+    }
     if (std::isfinite(startTime) && startTime >= 0) {
         appendLinuxMpvOption(
             arguments,
@@ -1375,6 +1379,13 @@ std::vector<AudioTrack> readTracksOfType(
         if (const mpv_node* selectedNode = getNodeMapValue(trackNode, "selected")) {
             track.selected = readNodeFlag(*selectedNode);
         }
+        if (type == "sub") {
+            const mpv_node* mainNode = getNodeMapValue(trackNode, "main-selection");
+            int64_t selection = 0;
+            if (mainNode && readNodeInteger(*mainNode, selection) && selection != 0) {
+                track.selected = false;
+            }
+        }
         if (const mpv_node* defaultNode = getNodeMapValue(trackNode, "default")) {
             track.defaultTrack = readNodeFlag(*defaultNode);
         }
@@ -1998,6 +2009,10 @@ Napi::Value LoadPlayback(const Napi::CallbackInfo& info)
     }
 
     std::vector<std::pair<std::string, std::string>> options;
+    if (playback.Has("subtitleTrackId") && playback.Get("subtitleTrackId").IsNumber()) {
+        const int64_t trackId = playback.Get("subtitleTrackId").As<Napi::Number>().Int64Value();
+        options.emplace_back("sid", trackId < 0 ? "no" : std::to_string(trackId));
+    }
     if (!title.empty()) {
         options.emplace_back("force-media-title", title);
     }

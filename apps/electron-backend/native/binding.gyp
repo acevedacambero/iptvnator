@@ -210,7 +210,11 @@
           {
             "type": "executable",
             "sources": [
-              "caption-helper/process_loopback_capture_win.cpp"
+              "caption-helper/process_loopback_capture_win.cpp",
+              "caption-helper/mpv_audio_decode_win.cpp"
+            ],
+            "include_dirs": [
+              "<!(node -p \"(process.env.LIBMPV_INCLUDE_DIR || process.cwd()).replace(/\\\\\\\\/g, '/')\")"
             ],
             "defines": [
               "WIN32_LEAN_AND_MEAN",

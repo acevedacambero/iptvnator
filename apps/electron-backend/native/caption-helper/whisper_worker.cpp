@@ -4,6 +4,7 @@
 #endif
 
 #include "whisper.h"
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <chrono>
@@ -18,7 +19,7 @@
 namespace {
 
 constexpr uint32_t kMaxPcmBytes = 16'000 * 2 * 12; // 12 s, s16le mono
-constexpr int kDefaultMaxTokens = 64;
+constexpr int kDefaultMaxTokens = 128;
 
 uint32_t decodeLe32(const unsigned char bytes[4])
 {
@@ -123,27 +124,63 @@ void emitError(uint32_t requestId, const char* code, const std::string& message)
     std::fflush(stdout);
 }
 
-void emitReady(const char* modelPath, int threads)
+void emitReady(const char* modelPath, int threads, const char* backend)
 {
     std::fprintf(
         stdout,
-        "{\"event\":\"ready\",\"model\":\"%s\",\"sampleRate\":%d,\"threads\":%d}\n",
+        "{\"event\":\"ready\",\"model\":\"%s\",\"sampleRate\":%d,\"threads\":%d,\"backend\":\"%s\"}\n",
         jsonEscape(modelPath).c_str(),
         WHISPER_SAMPLE_RATE,
-        threads
+        threads,
+        backend
     );
     std::fflush(stdout);
 }
 
-void emitResult(uint32_t requestId, const std::string& text, int elapsedMs)
+void emitResult(uint32_t requestId, const std::string& text, int elapsedMs, whisper_context* context)
 {
     std::fprintf(
         stdout,
-        "{\"id\":%u,\"ok\":true,\"text\":\"%s\",\"elapsedMs\":%d}\n",
+        "{\"id\":%u,\"ok\":true,\"text\":\"%s\",\"elapsedMs\":%d,\"tokens\":[",
         requestId,
         jsonEscape(text).c_str(),
         elapsedMs
     );
+    bool first = true;
+    std::string pending;
+    int64_t pendingStart = 0, pendingEnd = 0;
+    auto completeUtf8 = [](const std::string& value) {
+        size_t remaining = 0;
+        for (unsigned char ch : value) {
+            if (remaining) { if ((ch & 0xc0) != 0x80) return false; --remaining; }
+            else if (ch < 0x80) continue;
+            else if ((ch & 0xe0) == 0xc0) remaining = 1;
+            else if ((ch & 0xf0) == 0xe0) remaining = 2;
+            else if ((ch & 0xf8) == 0xf0) remaining = 3;
+            else return false;
+        }
+        return remaining == 0;
+    };
+    for (int segment = 0; segment < whisper_full_n_segments(context); ++segment) {
+        for (int token = 0; token < whisper_full_n_tokens(context, segment); ++token) {
+            const auto data = whisper_full_get_token_data(context, segment, token);
+            if (data.id >= whisper_token_eot(context) || data.t0 < 0 || data.t1 < data.t0) continue;
+            const char* tokenText = whisper_full_get_token_text(context, segment, token);
+            if (!tokenText) continue;
+            // BPE can split a Unicode character across tokens. Do not emit
+            // invalid UTF-8 JSON strings, which turn music symbols into U+FFFD.
+            if (pending.empty()) pendingStart = data.t0 * 10;
+            pending += tokenText;
+            pendingEnd = data.t1 * 10;
+            if (!completeUtf8(pending)) continue;
+            std::fprintf(stdout, "%s{\"text\":\"%s\",\"startMs\":%lld,\"endMs\":%lld}",
+                first ? "" : ",", jsonEscape(pending).c_str(),
+                static_cast<long long>(pendingStart), static_cast<long long>(pendingEnd));
+            pending.clear();
+            first = false;
+        }
+    }
+    std::fprintf(stdout, "]}\n");
     std::fflush(stdout);
 }
 
@@ -217,10 +254,32 @@ int main(int argc, char** argv)
     }
 
     whisper_context_params contextParams = whisper_context_default_params();
-    // V1 baseline is CPU-first for predictable packaging. A later runtime can
-    // opt into GPU backends without changing the worker protocol.
+    const char* requestedDevice = std::getenv("IPTVNATOR_WHISPER_DEVICE");
+    if (requestedDevice && std::strcmp(requestedDevice, "cpu") != 0 &&
+        std::strcmp(requestedDevice, "cuda") != 0) {
+        std::fprintf(stderr, "IPTVNATOR_WHISPER_DEVICE must be cpu or cuda.\n");
+        return 64;
+    }
     contextParams.use_gpu = false;
+#ifdef IPTVNATOR_WHISPER_CUDA
+    contextParams.use_gpu = !requestedDevice || std::strcmp(requestedDevice, "cpu") != 0;
+#endif
     contextParams.flash_attn = false;
+
+    ggml_backend_load_all();
+    bool cudaAvailable = false;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto device = ggml_backend_dev_get(i);
+        cudaAvailable = cudaAvailable ||
+            (ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_GPU &&
+             std::strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)), "CUDA") == 0);
+    }
+    if (requestedDevice && std::strcmp(requestedDevice, "cuda") == 0 &&
+        (!contextParams.use_gpu || !cudaAvailable)) {
+        std::fprintf(stderr, "The requested CUDA caption device is unavailable.\n");
+        return 3;
+    }
+    contextParams.use_gpu = contextParams.use_gpu && cudaAvailable;
 
     whisper_context* context = whisper_init_from_file_with_params(
         options.modelPath.c_str(),
@@ -231,8 +290,9 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    emitReady(options.modelPath.c_str(), options.threads);
+    emitReady(options.modelPath.c_str(), options.threads, contextParams.use_gpu ? "CUDA" : "CPU");
 
+    std::string previousPrompt;
     while (true) {
         unsigned char header[8]{};
         if (!readExact(header, sizeof(header))) {
@@ -260,18 +320,20 @@ int main(int argc, char** argv)
         const std::vector<float> samples = pcm16ToFloat(pcm);
 
         whisper_full_params params = whisper_full_default_params(
-            WHISPER_SAMPLING_GREEDY
+            WHISPER_SAMPLING_BEAM_SEARCH
         );
+        params.beam_search.beam_size = 3;
+        params.initial_prompt = previousPrompt.empty() ? nullptr : previousPrompt.c_str();
         params.n_threads = options.threads;
         params.translate = false;
         params.no_context = true;
-        params.no_timestamps = true;
-        params.single_segment = true;
+        params.no_timestamps = false;
+        params.single_segment = false;
         params.print_special = false;
         params.print_progress = false;
         params.print_realtime = false;
         params.print_timestamps = false;
-        params.token_timestamps = false;
+        params.token_timestamps = true;
         params.max_tokens = kDefaultMaxTokens;
         params.language = "en";
         params.detect_language = false;
@@ -296,7 +358,9 @@ int main(int argc, char** argv)
             continue;
         }
 
-        emitResult(requestId, collectText(context), elapsedMs);
+        const auto text = collectText(context);
+        emitResult(requestId, text, elapsedMs, context);
+        previousPrompt = text.size() <= 320 ? text : text.substr(text.size() - 320);
     }
 
     whisper_free(context);

@@ -192,9 +192,14 @@ not a normal DOM element. Do not place critical Angular overlays on top of that
 video viewport and expect CSS `z-index` to win. Native-view controls use a
 compositor-safe dock below the viewport instead of a true overlay.
 
-The native-view dock has a stable reserved height while embedded controls are
-enabled. Controls fade in and out inside that fixed dock, so normal show/hide
-behavior does not resize the native MPV viewport or make the video jump. Volume
+In windowed mode the native-view dock has a stable reserved height while
+embedded controls are enabled. Controls fade in and out inside that fixed dock,
+so normal show/hide behavior does not resize the native MPV viewport. In
+fullscreen, the dock reservation is released when controls are hidden, allowing
+a 16:9 stream to fill a 16:9 display without artificial side bars. Revealing
+controls or opening a menu restores the reserved dock; the existing viewport
+ResizeObserver synchronizes the native view in both directions. Source aspect
+ratio is preserved, so different screen/content ratios can still have bars. Volume
 and audio-track panels replace the default transport controls inside the same
 dock and provide a back button to return to the default controls. Popovers and
 menus must stay inside that dock unless the native layering strategy changes.
@@ -487,6 +492,46 @@ Audio tracks are discovered from MPV's `track-list` property. The selected track
 
 Subtitle tracks mirror the audio-track contract: same `track-list` source, same parsing pipeline, but selected through MPV's `sid` property. A `trackId` of `-1` from the renderer is interpreted as "disable subtitles" and translated to `sid=no` at the addon boundary. Playback speed is observed and set through MPV's `speed` property, clamped at the addon to `[0.25, 4.0]`. Aspect override uses MPV's `video-aspect-override` property as a passthrough string ("no", "16:9", "4:3", "21:9", "2.35:1"). All four properties (`sid`, `speed`, `video-aspect-override`, plus `aid`) are observed at session init so renderer state stays in sync with the native side without needing extra round-trips.
 
+`EmbeddedMpvSubtitlePolicy` adds a main-process-only, file-scoped `sid=no`
+hint for every new live playback, using the same explicit `isLive`/fallback
+classification as reconnect. Native `loadfile` options and frame-copy `opt.sid`
+carry the hint; it never changes the global VOD default. A manual source-track
+selection survives automatic reconnect, while user-driven channel changes
+reset it. AI ASS overlays have independent ownership and remain enabled.
+
+### Layered source text subtitles (Windows native view)
+
+Movie/episode playback with subtitle tracks offers a layers button in the
+native dock. Its Material dialog participates in the existing overlay/bounds
+visibility contract, so the native child window cannot cover the controls.
+Users select upper/lower tracks, swap them, and configure independent 24–120
+font sizes, 4–85% bottom distances, RGB colors and left/center/right alignment.
+Styles persist separately from AI and engine-neutral subtitle preferences;
+track ids are file-scoped and never persisted. The upper layer must be above
+the lower layer when both are selected. Returning to single subtitles restores
+the track and visibility state captured before layer mode.
+
+`NativeSubtitleLayersService` uses MPV's `sid` and `secondary-sid` to decode
+the chosen tracks. It reads plain `sub-text`/`secondary-sub-text` at the player
+clock while both native visibility flags are off, then paints an independently
+escaped ASS overlay at id 2 on the existing private IPC client (AI owns id 1).
+This preserves subtitle timing through pause, speed changes and seek without
+extracting files, recognizing audio or translating already-present subtitles.
+Source ASS decorations are reduced to plain dialogue in this mode so each
+layer can own its color and position. Bitmap codecs (PGS, DVD/VobSub, DVB and
+XSub) are disabled in the layer selector with an explanation; their existing
+single-track native rendering is retained, without promising font editing.
+
+The narrow main-only bridge exposes no general MPV command API or source
+filename. Main validates tracks, styles and a playback revision. Source
+replacement is serialized with configuration changes; in-flight text reads
+cannot repaint after teardown. Manual single-track selection, replacement and
+disposal clear layer ownership and restore visibility before continuing.
+Runtime pipe failure also restores native rendering. Subtitle polling is
+bounded to one in-flight read per session, skips unchanged ASS payloads and
+clears overlays during cue gaps. `main-selection` distinguishes the primary
+track from the secondary one in native snapshots.
+
 The renderer learns which features the loaded addon binary supports through the `EmbeddedMpvSupport.capabilities` field returned from `getEmbeddedMpvSupport()`. The service probes `typeof addon.<method> === 'function'` for each optional native export. Older addon binaries with the original audio-only surface return `capabilities: { subtitles: false, playbackSpeed: false, aspectOverride: false, screenshot: false, recording: false }`, and the renderer hides the corresponding controls instead of throwing at runtime. Linux intentionally does not export libmpv-only optional controls while it uses the process-isolated `mpv --wid` backend.
 
 Linux audio-track discovery works differently from macOS/Windows because the hand-rolled JSON IPC reply parser only understands scalar `data` values: the poll loop reads `track-list/count` every tick and walks the scalar `track-list/N/{type,id,title,lang,default,forced}` sub-properties only when the count changes. The selected track is reconciled from the scalar `aid` property on every tick (`aid` reads back non-numeric when audio is disabled, which maps to "no selection"). Track switching still goes through `set_property aid` over the same socket.
@@ -601,6 +646,138 @@ button disabled state at current-season boundaries.
 
 Autoplay is enabled by default for series playback in embedded MPV. On `ended`, Xtream and Stalker series detail views start the next episode only when the current episode has a next item in the same season. Playback stops on the last episode of the current season. Previous always switches to the previous episode in the current season; it does not implement a restart-threshold behavior.
 
+## Windows AI Live Captions
+
+The Windows x64 native-view engine owns ahead-of-playback audio decoding, local
+Whisper English ASR, optional Chinese translation, and ASS overlays in main.
+The renderer uses the dedicated `liveCaptions` preload; it never receives PCM,
+the private MPV pipe, or decrypted translation credentials. The capture helper
+and persistent Whisper worker must be packaged together with the Whisper
+license. Translation settings remain separate from ordinary settings backups.
+
+`iptvnator_caption_helper --decode` loads only the adjacent bundled libmpv DLL
+and emits 16 kHz mono PCM to a private parent-owned pipe without audible output.
+The source URL and HTTP options arrive on stdin, never process arguments or logs.
+An `ashowinfo` filter supplies each 100 ms frame's source PTS and seed-zero
+Adler-32 checksum; rebasing is disabled in this decoder. Precise seeks and initial
+audio synchronization are disabled only in the silent decoder: otherwise mpv
+trims samples after the filter has already timestamped them, causing captions
+to appear seconds early. The parent drops pre-position frames. PCM is matched
+to each timestamp by its checksum, allowing at most one second of unlabelled
+decoder preroll; unmatched audio, incomplete EOF frames, and log/event overflow
+fail the caption session instead of silently shifting its clock. Only FFmpeg
+diagnostics are subscribed, avoiding all-module trace traffic.
+The visible player's clock is mapped using `demuxer-start-time`
+plus `time-pos` (or just `time-pos` if rebasing is disabled). Missing clocks or
+source discontinuities stop captions rather than inventing synchronization.
+
+Speech is cut at silence after two seconds or bounded to eight seconds, with
+600 ms left and 800 ms right context. Only words in the fresh interval become
+cues, so context is not replayed. Silence bypasses recognition. The pinned,
+SHA-256-verified `small.en-q5_1` model replaces the base model default; existing
+model files are retained and explicit developer model overrides remain possible.
+The persistent worker uses three-beam decoding with preceding speech context.
+Word timestamps are still ASR estimates, and names or noisy speech can remain
+incorrect. Each cue's translation completes before it becomes playable; a
+translation failure permits its English cue with an explicit nonfatal error.
+
+The regular worker remains a CPU compatibility build. The optional CMake flag
+`IPTVNATOR_WHISPER_CUDA=ON` enables NVIDIA acceleration with the same framed PCM
+and NDJSON protocol. Its ready message adds `backend: CPU | CUDA`.
+`IPTVNATOR_WHISPER_DEVICE=cpu` forces CPU, while `cuda` requires an available
+CUDA backend and fails explicitly if it is unavailable. With no override, a
+CUDA build uses its available GPU and otherwise permits CPU execution. Invalid
+device names fail at startup. The renderer needs no broader native API.
+
+`node tools/live-caption/build-whisper-cuda-helper.mjs` builds into the separate
+`native/build/live-caption-cuda/bin` directory, preserving the regular worker.
+It requires MSVC, Ninja, a CUDA 13 SDK in `IPTVNATOR_CUDA_ROOT`, and the NVIDIA
+license file in `IPTVNATOR_CUDA_LICENSE`. `CMAKE_EXE` selects CMake;
+`IPTVNATOR_WHISPER_CUDA_ARCHITECTURES` overrides native GPU targeting. The tested
+RTX 5060 Ti build uses CUDA 13.4.1 and `120a-real` with Visual Studio 2026.
+The SDK is staged locally from NVIDIA's redistribution archives, checked against
+their published SHA-256 values; no system toolkit or driver is replaced.
+The optional worker must travel with adjacent `cublas64_13.dll`,
+`cublasLt64_13.dll`, `cudart64_13.dll`, the NVIDIA license and Whisper license.
+These artifacts belong in the normal unpacked native directory, outside ASAR.
+
+The local quality variant reuses the validated synchronization package's JS/UI
+and replaces only these native artifacts in a separate package directory.
+Its launcher sets `IPTVNATOR_WHISPER_MODEL` to the full `ggml-large-v3.bin` and
+requires CUDA. The regular launcher retains Small English Q5_1. Large v3 is
+multilingual, but the worker continues to select English recognition and the
+existing Chinese translation provider. It is not a new cloud API dependency.
+The pinned model revision is `5359861c739e955e79d9a303bcbc70fb988958b1`, size
+3,095,033,483 bytes, SHA-256
+`64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
+Model overrides are developer/launcher configuration rather than a new settings
+control. GPU absence or insufficient VRAM can prevent this quality variant
+from starting; the CPU compatibility package remains available.
+
+`node --test tools/live-caption/whisper-worker.test.mjs` verifies device
+configuration, CPU compatibility, invalid-frame recovery and full-model CUDA
+inference with token timestamps. Set `CAPTION_SMALL_MODEL` and
+`CAPTION_LARGE_MODEL` to verified models; `CAPTION_CPU_WORKER` and
+`CAPTION_CUDA_WORKER` optionally select packaged executables. Model-dependent
+cases skip explicitly when those fixtures are not supplied.
+
+`LiveCaptionLifecycle` retains enablement across pause/resume, media replacement,
+seek, audio-track and speed changes. Pause stops capture and clears the overlay;
+resume creates a fresh pipeline. Playback changes stop capture before the
+command and start a new generation afterwards. Turning captions off during a
+pending change prevents that change from re-enabling them. Reconnect also resets
+the caption timeline. Per-generation guards reject old ASR, clock and translation
+replies.
+
+`LiveCaptionSchedule` holds both audio and video until ten seconds of prepared
+captions are available. If prepared coverage falls below 800 ms, it buffers again
+and resumes at ten seconds; the live stream consequently gains processing delay.
+The decoder pauses with three queued utterances or 24 seconds of decoded lead.
+PCM, metadata, utterance and cue queues have hard bounds. A 60 ms scheduler
+paints both languages together according to video PTS, and expires them during
+silence; a stalled media clock keeps its cue stationary. A user's explicit pause
+takes precedence over a caption-owned buffering pause, including teardown.
+While playback is held, the decoder may finish the next context utterance beyond
+the normal lead cap; the utterance-count bound prevents a buffering deadlock
+without allowing an unbounded queue. Captions can be cancelled during model
+startup, and a late Start reply cannot reactivate the renderer's button.
+Telemetry labels this clock `media-pts` and reports buffering, prepared lead and
+cue display error. Display error measures scheduling against ASR word timestamps;
+it does not measure word-timestamp accuracy or physical screen/audio latency.
+The earlier WASAPI lag tracker remains a measurement utility for compatibility,
+but its window-end lag is not used to claim synchronized playback.
+
+`node --test tools/live-caption/decoded-audio-clock.test.mjs` exercises the actual
+Windows helper and production PCM reader. Generated WAV samples are checked
+against each frame's PTS after a nonzero seek; an optional FFmpeg-generated HLS
+fixture checks changing tones against their source times, covering segment
+preroll that previously produced a roughly three-second error. The native test
+requires a built helper and adjacent runtime; the HLS case requires FFmpeg.
+
+Playback settings expose English size (24–96), translated size (24–120),
+bottom margin (4–75%), horizontal alignment (left/center/right), and separate
+English/Chinese colors. Defaults remain 42, 50, 10.2%, centered and white.
+A vertical slider and upper/middle/lower presets complement numeric input;
+each color has a native picker, five swatches and an editable `#RRGGBB` field.
+The preview uses the same 1920×1080 coordinate proportions, line separation,
+alignment anchors and colors as the ASS builder. Its text scales with the
+preview container rather than a fixed CSS font-size divisor. It previews edits
+locally; saving updates the current caption through the existing narrow IPC.
+
+Font sizes use a 1080p reference and scale with video size. Main validates finite
+numeric values, alignment and six-digit RGB colors, normalizes hex case, and
+atomically writes version-1 `userData/live-caption-display.json`. Historical
+v1 files containing just size/margin retain those values and gain centered,
+white defaults on read, without rewriting the file. Corrupt or unsupported
+versions fall back to defaults; invalid updates preserve the saved file.
+The ASS builder converts RGB to BGR, retains a black outline, and positions
+both languages at the left/center/right anchor with proportional side margins.
+The upper-position limit keeps maximum-size unwrapped lines inside the frame.
+Saving redraws the current cue without restarting capture or recognition.
+The display IPC accepts only these appearance values and grants no general
+MPV commands. This setting is for AI-generated captions, not source subtitle
+tracks or external players.
+
 ## Session Options (Extra libmpv Options)
 
 `Settings > Playback > Extra embedded MPV options` is a free-form textarea,
@@ -619,6 +796,23 @@ At session creation the IPC handler reads the mirror through
 network defaults followed by the user's allowed lines, and every engine
 applies it after its own built-in options and before `mpv_initialize`, so a
 user line overrides both:
+
+Windows native-view resolves HTTP redirects before loading an `.m3u8` source.
+Recent libmpv builds reuse the initial manifest but resolve its relative segment
+URLs against the input URL rather than the redirected base, causing failed
+segment requests and a wait for the next live playlist refresh. The main-process
+`EmbeddedMpvHlsLoader` uses Electron `net.request` redirect events (not
+`net.fetch`'s input `Response.url`), cancels the response after its headers, and
+passes only the final HTTP(S) URL to the addon. Source headers, user agent and
+referrer accompany the request. Resolution has a five-second timeout and falls
+back to the original source on failure. Continuous TS, local files, other engines
+and advanced MPV cookie/proxy/TLS/header overrides bypass this workaround.
+Switching or disposing cancels pending resolution; pausing cancels an in-flight
+reconnect resolution while preserving an initial load. Reconnect resolves
+the original address again so temporary access tokens are never cached. Session
+snapshots and reconnect state retain the original channel address. Neither URL is
+logged. Measure startup with `playback-restart` or the first-video-frame event;
+`file-loaded` and the native snapshot's `playing` status precede actual output.
 
 | Engine              | Transport                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -775,6 +969,39 @@ recording UI and timer path.
 The default recording folder is `app.getPath('downloads')`, matching the desktop download manager's fallback. Users can override it in Settings through `Settings.recordingFolder`; an empty setting means system Downloads. Recordings never enter the Downloads queue (MPV writes from the active playback session while the download manager owns independent backend download jobs), but their lifecycle IS tracked: `EmbeddedMpvRecordingTracker` (`apps/electron-backend/src/app/services/embedded-mpv-recording-tracker.ts`) persists each recording into the dedicated `recordings` SQLite table — start hook and explicit-stop hook from `EmbeddedMpvNativeService`, plus a session-snapshot observer that catches the three implicit stop paths (stream-replacement auto-stop, frame-copy helper crash leaving `active: true` behind, session error/close). Rows left in `recording` by a hard app kill are repaired at startup into playable `interrupted` partials or `failed`. The download manager surfaces these rows; see `docs/architecture/download-manager.md` ("Live-TV recordings").
 
 mpv's own caveats apply: the output container is inferred from the target extension, and seeking or switching streams while recording can produce broken output. IPTVnator limits the UI to live streams and stops recording on playback replacement to avoid the most obvious corruption path, but the feature should still be treated as an experimental embedded MPV capability.
+
+### AI recording sidecars (Windows x64)
+
+When recording starts with an AI-caption session configured, the recording
+exporter captures its model and translation options in main-process memory.
+The tracker enqueues export only after recording finalization. Export decodes
+the saved `.ts`, recognizes English and translates into Simplified Chinese,
+writing a UTF-8 SRT with English above Chinese beside the video. It uses the
+configured translation provider when enabled, otherwise Google free translation.
+Stopping live captions later does not discard an already captured recording.
+Recordings started without AI captions have no AI sidecar job.
+
+MPV's recorder rebases packet timestamps and may write ahead of the visible
+playhead. Button time and live-caption arrival time are therefore unsuitable
+for SRT origin. Bounded head/tail PES probes read the saved TS clock; decoded
+audio and ASR token timestamps are rebased to that clock, clipped to the file
+duration, and overlap context is excluded from neighboring cue ownership.
+The video is not reencoded and source subtitle tracks are not burned in.
+
+`SharedWhisperLease` shares one loaded model between live captions and export,
+serializes inference, and prioritizes live requests over queued background
+work. Audio decoding uses pause/backpressure and bounded queues. Exports run
+one at a time (at most ten waiting jobs). Closing the app cancels outstanding
+jobs; there is no restart/resume queue. Keep it open until the control bar
+reports SRT saved. Session state exposes progress and final sidecar path, but
+never model credentials or translation secrets.
+
+Sidecars use exclusive creation: an existing `.srt` is preserved and the new
+file gets `.ai-N.srt`. Failure/cancellation removes only the incomplete file
+created by that job and preserves the video. Translation failures retain the
+English cue and return an untranslated-cue count for the completion warning.
+An all-silent recording produces an empty SRT. Saved video playback can load
+the sidecar as a normal external subtitle track.
 
 ## Renderer Architecture And Reactivity
 

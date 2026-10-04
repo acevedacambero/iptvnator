@@ -7,6 +7,7 @@ import type {
     DownloadRecoveryResult,
     DownloadContentType,
 } from './catchup-download.interface';
+import type { NativeSubtitleLayers, NativeSubtitleLayersState } from './native-subtitle-layers.interface';
 import {
     EmbeddedMpvBounds,
     EmbeddedMpvRecordingStartOptions,
@@ -1316,6 +1317,8 @@ export interface ElectronBridgeApi {
         sessionId: string,
         style: EmbeddedMpvSubtitleStyle
     ) => Promise<EmbeddedMpvSession | null>;
+    getEmbeddedMpvSubtitleLayers?: (sessionId: string) => Promise<NativeSubtitleLayersState>;
+    setEmbeddedMpvSubtitleLayers?: (sessionId: string, layers: NativeSubtitleLayers | null, playbackRevision: number) => Promise<NativeSubtitleLayersState>;
     /** Opens the main-process subtitle file dialog; null when cancelled. */
     selectEmbeddedMpvSubtitleFile?: () => Promise<string | null>;
     setEmbeddedMpvSpeed?: (

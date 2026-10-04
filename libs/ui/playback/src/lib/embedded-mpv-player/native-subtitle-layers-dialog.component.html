@@ -1,0 +1,205 @@
+<h2 mat-dialog-title>
+    {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_TITLE' | translate }}
+</h2>
+<mat-dialog-content>
+    <p class="description">
+        {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_DESCRIPTION' | translate }}
+    </p>
+    @if (busy() && !draft()) {
+        <p role="status">{{ 'LOADING' | translate }}</p>
+    }
+    @if (draft(); as value) {
+        <div class="layer-preview" aria-hidden="true">
+            @for (key of layerKeys; track key) {
+                <span
+                    [attr.data-test-id]="'native-layer-preview-' + key"
+                    [style.bottom.%]="value[key].style.bottomMarginPercent"
+                    [style.font-size.px]="value[key].style.fontSize * 0.2"
+                    [style.color]="value[key].style.color"
+                    [style.text-align]="value[key].style.alignment"
+                    [style.opacity]="value[key].trackId === null ? 0.3 : 1"
+                >
+                    {{ key === 'upper' ? 'English subtitle' : '中文字幕' }}
+                </span>
+            }
+        </div>
+        <div class="layer-forms">
+            @for (key of layerKeys; track key) {
+                <fieldset [attr.data-test-id]="'native-layer-' + key">
+                    <legend>
+                        {{
+                            'EMBEDDED_MPV.PLAYER.' +
+                                (key === 'upper'
+                                    ? 'NATIVE_LAYERS_UPPER'
+                                    : 'NATIVE_LAYERS_LOWER') | translate
+                        }}
+                    </legend>
+                    <mat-form-field appearance="outline" class="track-field">
+                        <mat-label>{{
+                            'EMBEDDED_MPV.PLAYER.SUBTITLES' | translate
+                        }}</mat-label>
+                        <mat-select
+                            [value]="value[key].trackId"
+                            [disabled]="busy()"
+                            (selectionChange)="setTrack(key, $event.value)"
+                            [attr.data-test-id]="'native-layer-track-' + key"
+                        >
+                            <mat-option [value]="null">{{
+                                'EMBEDDED_MPV.PLAYER.SUBTITLES_OFF' | translate
+                            }}</mat-option>
+                            @for (track of state()?.tracks; track track.id) {
+                                <mat-option
+                                    [value]="track.id"
+                                    [disabled]="!track.textSupported"
+                                    >{{ trackLabel(track) }}</mat-option
+                                >
+                            }
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>{{
+                            'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_SIZE' | translate
+                        }}</mat-label>
+                        <input
+                            matInput
+                            type="number"
+                            min="24"
+                            max="120"
+                            step="1"
+                            [disabled]="busy()"
+                            [value]="value[key].style.fontSize"
+                            (input)="inputStyle(key, 'fontSize', $event)"
+                            [attr.data-test-id]="'native-layer-size-' + key"
+                        />
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>{{
+                            'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_POSITION'
+                                | translate
+                        }}</mat-label>
+                        <input
+                            matInput
+                            type="number"
+                            min="4"
+                            max="85"
+                            step="0.5"
+                            [disabled]="busy()"
+                            [value]="value[key].style.bottomMarginPercent"
+                            (input)="
+                                inputStyle(key, 'bottomMarginPercent', $event)
+                            "
+                            [attr.data-test-id]="'native-layer-position-' + key"
+                        />
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>{{
+                            'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_COLOR'
+                                | translate
+                        }}</mat-label>
+                        <input
+                            matInput
+                            maxlength="7"
+                            [disabled]="busy()"
+                            [value]="value[key].style.color"
+                            (input)="inputStyle(key, 'color', $event)"
+                            [attr.data-test-id]="'native-layer-color-' + key"
+                        />
+                    </mat-form-field>
+                    <input
+                        type="color"
+                        class="color-picker"
+                        [disabled]="busy()"
+                        [value]="value[key].style.color"
+                        (input)="inputStyle(key, 'color', $event)"
+                        [attr.aria-label]="
+                            'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_COLOR'
+                                | translate
+                        "
+                    />
+                    <mat-form-field appearance="outline">
+                        <mat-label>{{
+                            'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_ALIGNMENT'
+                                | translate
+                        }}</mat-label>
+                        <mat-select
+                            [value]="value[key].style.alignment"
+                            [disabled]="busy()"
+                            (selectionChange)="
+                                setStyle(key, 'alignment', $event.value)
+                            "
+                        >
+                            <mat-option value="left">{{
+                                'SETTINGS.LIVE_CAPTION_DISPLAY.LEFT' | translate
+                            }}</mat-option>
+                            <mat-option value="center">{{
+                                'SETTINGS.LIVE_CAPTION_DISPLAY.CENTER'
+                                    | translate
+                            }}</mat-option>
+                            <mat-option value="right">{{
+                                'SETTINGS.LIVE_CAPTION_DISPLAY.RIGHT'
+                                    | translate
+                            }}</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                </fieldset>
+            }
+        </div>
+        <div class="secondary-actions">
+            <button
+                mat-button
+                type="button"
+                [disabled]="busy()"
+                (click)="swap()"
+                data-test-id="native-layer-swap"
+            >
+                {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_SWAP' | translate }}
+            </button>
+            <button
+                mat-button
+                type="button"
+                [disabled]="busy()"
+                (click)="defaults()"
+            >
+                {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_DEFAULTS' | translate }}
+            </button>
+        </div>
+        @if (validation(); as key) {
+            <p class="error" role="alert">
+                {{ 'EMBEDDED_MPV.PLAYER.' + key | translate }}
+            </p>
+        }
+    }
+    @if (error()) {
+        <p class="error" role="alert">{{ error() }}</p>
+    }
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+    @if (state()?.layers) {
+        <button
+            mat-button
+            type="button"
+            [disabled]="busy()"
+            (click)="disable()"
+            data-test-id="native-layers-disable"
+        >
+            {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_DISABLE' | translate }}
+        </button>
+    }
+    <button
+        mat-button
+        type="button"
+        mat-dialog-close
+        [disabled]="busy() && !!draft()"
+    >
+        {{ 'CLOSE' | translate }}
+    </button>
+    <button
+        mat-flat-button
+        type="button"
+        [disabled]="!canApply()"
+        (click)="apply()"
+        data-test-id="native-layers-apply"
+    >
+        {{ 'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_APPLY' | translate }}
+    </button>
+</mat-dialog-actions>

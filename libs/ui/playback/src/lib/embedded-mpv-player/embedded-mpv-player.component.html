@@ -399,6 +399,15 @@
                         </button>
                     }
 
+                    @if (capabilities().nativeSubtitleLayers && !isLivePlayback() && hasSubtitleTracks()) {
+                        <button mat-icon-button type="button" class="embedded-mpv-player__control-button"
+                            data-test-id="embedded-mpv-native-subtitle-layers" (click)="openNativeSubtitleLayers()"
+                            [attr.aria-label]="'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_TITLE' | translate"
+                            [matTooltip]="'EMBEDDED_MPV.PLAYER.NATIVE_LAYERS_TITLE' | translate">
+                            <mat-icon>layers</mat-icon>
+                        </button>
+                    }
+
                     @if (showAiCaptions()) {
                         <button
                             mat-icon-button

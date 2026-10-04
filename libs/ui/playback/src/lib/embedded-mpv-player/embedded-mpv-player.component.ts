@@ -16,6 +16,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatDialog } from '@angular/material/dialog';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { merge } from 'rxjs';
@@ -37,6 +38,7 @@ import { EmbeddedMpvDockPanelComponent } from './embedded-mpv-dock-panel.compone
 import { EmbeddedMpvDockPanelState } from './embedded-mpv-dock-panels';
 import { EmbeddedMpvLegacyInteractions } from './embedded-mpv-legacy-interactions';
 import { EmbeddedMpvLiveCaptionController } from './embedded-mpv-live-caption.controller';
+import { NativeSubtitleLayersDialogComponent } from './native-subtitle-layers-dialog.component';
 import { EmbeddedMpvOverlayVisibilityService } from './embedded-mpv-overlay-visibility.service';
 import { EmbeddedMpvSessionController } from './embedded-mpv-session-controller';
 import { EmbeddedMpvShortcuts } from './embedded-mpv-shortcuts';
@@ -107,6 +109,7 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
         EmbeddedMpvOverlayVisibilityService
     );
     private readonly translate = inject(TranslateService);
+    private readonly subtitleLayersDialog = inject(MatDialog);
     /**
      * Ticks when the active language or a loaded translation file changes.
      * translate.instant() is invisible to the signal graph, so every
@@ -177,7 +180,6 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
         () =>
             this.showAiCaptions() &&
             Boolean(this.controller.sessionId()) &&
-            !this.liveCaptions.starting() &&
             (this.liveCaptions.available() || this.liveCaptions.active())
     );
     readonly isLoading = computed(
@@ -361,8 +363,23 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
         return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
     });
     readonly recordingStatusText = computed(() => {
+        this.translationsTick();
         if (this.isRecording()) {
             return `REC ${formatTime(this.recordingElapsed())}`;
+        }
+        const exported = this.liveCaptions.state().recordingSubtitle;
+        if (exported) {
+            const key =
+                exported.state === 'working'
+                    ? 'SRT_EXPORT_PROGRESS'
+                    : exported.state === 'ready'
+                      ? exported.untranslatedCueCount
+                          ? 'SRT_EXPORT_PARTIAL'
+                          : 'SRT_EXPORT_READY'
+                      : 'SRT_EXPORT_FAILED';
+            return this.translate.instant(`EMBEDDED_MPV.PLAYER.${key}`, {
+                progress: exported.progress,
+            });
         }
         return this.recordingMessage();
     });
@@ -787,6 +804,15 @@ export class EmbeddedMpvPlayerComponent implements OnDestroy {
         await this.controller.setSubtitleTrack(trackId);
         this.menus.close('subtitle');
         this.legacyInteractions.scheduleControlsHide();
+    }
+    openNativeSubtitleLayers(): void {
+        const sessionId = this.session()?.id;
+        const playback = this.playback();
+        if (!sessionId || this.isLivePlayback() || !this.capabilities().nativeSubtitleLayers) return;
+        this.subtitleLayersDialog.open(NativeSubtitleLayersDialogComponent, {
+            width: '760px', maxWidth: '94vw', maxHeight: '90vh',
+            data: { sessionId, isCurrent: () => this.session()?.id === sessionId && this.playback() === playback },
+        });
     }
 
     async selectSpeed(speed: number): Promise<void> {

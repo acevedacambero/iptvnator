@@ -97,6 +97,9 @@ vendor/embedded-mpv/*/lib/
 vendor/embedded-mpv/*/notices/
 vendor/embedded-mpv/*/runtime-manifest.json
 
+# Downloaded, pinned whisper.cpp build input. Restaged by the source helper.
+/vendor/live-caption/
+
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json

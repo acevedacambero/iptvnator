@@ -1,0 +1,280 @@
+@if (available) {
+    <div
+        class="setting-item setting-item--full-control"
+        data-setting-id="live-caption-display"
+        data-test-id="live-caption-display-setting"
+    >
+        <div class="setting-item__meta">
+            <h4>{{ 'SETTINGS.LIVE_CAPTION_DISPLAY.TITLE' | translate }}</h4>
+            <p>{{ 'SETTINGS.LIVE_CAPTION_DISPLAY.DESCRIPTION' | translate }}</p>
+        </div>
+        <div class="setting-item__control caption-display">
+            <div class="caption-display__fields">
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{
+                        'SETTINGS.LIVE_CAPTION_DISPLAY.ENGLISH_SIZE' | translate
+                    }}</mat-label>
+                    <input
+                        matInput
+                        type="number"
+                        min="24"
+                        max="96"
+                        step="1"
+                        [(ngModel)]="settings.sourceFontSize"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="changed()"
+                        [disabled]="loading || saving"
+                        data-test-id="caption-source-font"
+                    />
+                </mat-form-field>
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{
+                        'SETTINGS.LIVE_CAPTION_DISPLAY.CHINESE_SIZE' | translate
+                    }}</mat-label>
+                    <input
+                        matInput
+                        type="number"
+                        min="24"
+                        max="120"
+                        step="1"
+                        [(ngModel)]="settings.translatedFontSize"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="changed()"
+                        [disabled]="loading || saving"
+                        data-test-id="caption-translated-font"
+                    />
+                </mat-form-field>
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{
+                        'SETTINGS.LIVE_CAPTION_DISPLAY.BOTTOM_MARGIN'
+                            | translate
+                    }}</mat-label>
+                    <input
+                        matInput
+                        type="number"
+                        min="4"
+                        max="75"
+                        step="0.1"
+                        [(ngModel)]="settings.bottomMarginPercent"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="changed()"
+                        [disabled]="loading || saving"
+                        data-test-id="caption-bottom-margin"
+                    />
+                    <span matTextSuffix>%</span>
+                </mat-form-field>
+                <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{
+                        'SETTINGS.LIVE_CAPTION_DISPLAY.ALIGNMENT' | translate
+                    }}</mat-label>
+                    <mat-select
+                        [(ngModel)]="settings.alignment"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="changed()"
+                        [disabled]="loading || saving"
+                        data-test-id="caption-alignment"
+                    >
+                        @for (alignment of alignments; track alignment) {
+                            <mat-option
+                                [value]="alignment"
+                                [attr.data-test-id]="
+                                    'caption-align-' + alignment
+                                "
+                            >
+                                {{
+                                    'SETTINGS.LIVE_CAPTION_DISPLAY.' +
+                                        alignment.toUpperCase() | translate
+                                }}
+                            </mat-option>
+                        }
+                    </mat-select>
+                </mat-form-field>
+            </div>
+            <div class="caption-display__position">
+                <mat-slider
+                    min="4"
+                    max="75"
+                    step="0.1"
+                    discrete
+                    [disabled]="loading || saving"
+                >
+                    <input
+                        matSliderThumb
+                        [(ngModel)]="settings.bottomMarginPercent"
+                        [ngModelOptions]="{ standalone: true }"
+                        (ngModelChange)="changed()"
+                        [attr.aria-label]="
+                            'SETTINGS.LIVE_CAPTION_DISPLAY.BOTTOM_MARGIN'
+                                | translate
+                        "
+                        data-test-id="caption-position-slider"
+                    />
+                </mat-slider>
+                <div class="caption-display__presets">
+                    @for (position of positions; track position.label) {
+                        <button
+                            mat-button
+                            type="button"
+                            [disabled]="loading || saving"
+                            (click)="
+                                settings.bottomMarginPercent = position.margin;
+                                changed()
+                            "
+                        >
+                            {{
+                                'SETTINGS.LIVE_CAPTION_DISPLAY.' +
+                                    position.label | translate
+                            }}
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="caption-display__colors">
+                @for (field of colorFields; track field.key) {
+                    <div
+                        class="caption-display__color"
+                        role="group"
+                        [attr.aria-label]="
+                            'SETTINGS.LIVE_CAPTION_DISPLAY.' + field.label
+                                | translate
+                        "
+                    >
+                        <label [for]="'caption-picker-' + field.key">
+                            {{
+                                'SETTINGS.LIVE_CAPTION_DISPLAY.' + field.label
+                                    | translate
+                            }}
+                        </label>
+                        <div class="caption-display__color-inputs">
+                            <input
+                                type="color"
+                                [id]="'caption-picker-' + field.key"
+                                [(ngModel)]="settings[field.key]"
+                                [ngModelOptions]="{ standalone: true }"
+                                (ngModelChange)="changed()"
+                                [disabled]="loading || saving"
+                                [attr.aria-label]="
+                                    'SETTINGS.LIVE_CAPTION_DISPLAY.' +
+                                        field.label | translate
+                                "
+                                [attr.data-test-id]="
+                                    'caption-picker-' + field.key
+                                "
+                            />
+                            <mat-form-field
+                                appearance="outline"
+                                subscriptSizing="dynamic"
+                            >
+                                <mat-label>{{
+                                    'SETTINGS.LIVE_CAPTION_DISPLAY.COLOR_CODE'
+                                        | translate
+                                }}</mat-label>
+                                <input
+                                    matInput
+                                    type="text"
+                                    maxlength="7"
+                                    spellcheck="false"
+                                    [(ngModel)]="settings[field.key]"
+                                    [ngModelOptions]="{ standalone: true }"
+                                    (ngModelChange)="changed()"
+                                    [disabled]="loading || saving"
+                                    [attr.data-test-id]="'caption-' + field.key"
+                                />
+                            </mat-form-field>
+                        </div>
+                        <div class="caption-display__swatches">
+                            @for (color of colors; track color) {
+                                <button
+                                    type="button"
+                                    [style.background-color]="color"
+                                    [class.selected]="
+                                        settings[field.key].toUpperCase() ===
+                                        color
+                                    "
+                                    [attr.aria-label]="
+                                        ('SETTINGS.LIVE_CAPTION_DISPLAY.' +
+                                            field.label | translate) +
+                                        ' ' +
+                                        color
+                                    "
+                                    [attr.aria-pressed]="
+                                        settings[field.key].toUpperCase() ===
+                                        color
+                                    "
+                                    [disabled]="loading || saving"
+                                    (click)="
+                                        settings[field.key] = color; changed()
+                                    "
+                                ></button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            <div
+                class="caption-display__preview"
+                [attr.aria-label]="
+                    'SETTINGS.LIVE_CAPTION_DISPLAY.PREVIEW' | translate
+                "
+            >
+                <div
+                    class="caption-display__line"
+                    [style.bottom.%]="previewSourceBottom"
+                    [style.left.%]="previewLeft"
+                    [style.transform]="previewTransform"
+                    [style.font-size]="settings.sourceFontSize / 19.2 + 'cqw'"
+                    [style.color]="settings.sourceColor"
+                    data-test-id="caption-preview-source"
+                >
+                    Welcome to live captions.
+                </div>
+                <div
+                    class="caption-display__line"
+                    [style.bottom.%]="settings.bottomMarginPercent"
+                    [style.left.%]="previewLeft"
+                    [style.transform]="previewTransform"
+                    [style.font-size]="
+                        settings.translatedFontSize / 19.2 + 'cqw'
+                    "
+                    [style.color]="settings.translatedColor"
+                    data-test-id="caption-preview-translated"
+                >
+                    欢迎使用实时字幕。
+                </div>
+            </div>
+            <div class="caption-display__actions">
+                <button
+                    mat-stroked-button
+                    type="button"
+                    (click)="save()"
+                    [disabled]="loading || saving || !valid"
+                    data-test-id="caption-display-save"
+                >
+                    {{ 'SETTINGS.LIVE_CAPTION_DISPLAY.SAVE' | translate }}
+                </button>
+                <button
+                    mat-button
+                    type="button"
+                    (click)="reset()"
+                    [disabled]="loading || saving"
+                    data-test-id="caption-display-reset"
+                >
+                    {{ 'SETTINGS.LIVE_CAPTION_DISPLAY.RESET' | translate }}
+                </button>
+                <span role="status">
+                    @if (saved) {
+                        {{ 'SETTINGS.LIVE_CAPTION_DISPLAY.SAVED' | translate }}
+                    }
+                </span>
+            </div>
+            @if (!valid) {
+                <p class="caption-display__error" role="alert">
+                    {{ 'SETTINGS.LIVE_CAPTION_DISPLAY.RANGE' | translate }}
+                </p>
+            }
+            @if (error) {
+                <p class="caption-display__error" role="alert">{{ error }}</p>
+            }
+        </div>
+    </div>
+}

@@ -40,6 +40,8 @@ import {
     EmbeddedMpvReconnectState,
 } from './embedded-mpv-reconnect';
 import type { EmbeddedMpvSessionOptions } from './embedded-mpv-session-options';
+import { EmbeddedMpvHlsLoader } from './embedded-mpv-hls-loader';
+import { EmbeddedMpvSubtitlePolicy, type NativeEmbeddedMpvPlayback } from './embedded-mpv-subtitle-policy';
 import {
     removeSessionOptionsDirectory,
     removeSessionOptionsFile,
@@ -101,7 +103,7 @@ export interface NativeEmbeddedMpvAddon {
         /** `key=value` libmpv options applied after the engine's built-ins. */
         extraOptions?: string[]
     ): string;
-    loadPlayback(sessionId: string, playback: ResolvedPortalPlayback): void;
+    loadPlayback(sessionId: string, playback: NativeEmbeddedMpvPlayback): void;
     setBounds(sessionId: string, bounds: EmbeddedMpvBounds): void;
     setPaused(sessionId: string, paused: boolean): void;
     seek(sessionId: string, seconds: number): void;
@@ -176,6 +178,13 @@ export class EmbeddedMpvNativeService {
     private cachedLinuxMpvExecutableReason: string | null | undefined;
     private frameCopyAdapter: EmbeddedMpvFrameCopyAdapter | null = null;
     private sessionOptionsDirectory: string | null = null;
+    private readonly hlsLoader = new EmbeddedMpvHlsLoader();
+    private readonly subtitlePolicy = new EmbeddedMpvSubtitlePolicy();
+    private onPlaybackReload?: (sessionId: string) => void;
+
+    setPlaybackReloadHandler(handler: (sessionId: string) => void): void {
+        this.onPlaybackReload = handler;
+    }
     /**
      * Reloads a dropped stream (see embedded-mpv-reconnect.ts). `publish`
      * runs from a timer, outside the polling try/catch, so it must swallow
@@ -203,19 +212,29 @@ export class EmbeddedMpvNativeService {
                 // user's file once the reload plays.
                 session.restoreSubtitleAfterReconnect = true;
             }
-            addon.loadPlayback(sessionId, playback);
-            // Sessions run with keep-open=yes, so EOF on a live stream leaves
-            // mpv paused at the end of the old file and a plain loadfile
-            // inherits that pause: the reload then buffers, reports
-            // `paused` and never plays. Unpausing is part of the reload.
-            try {
-                addon.setPaused(sessionId, false);
-            } catch (error) {
-                console.warn(
-                    `[Embedded MPV][reconnect] session ${sessionId}: could not clear the keep-open pause after the reload:`,
-                    error
-                );
-            }
+            const pending = this.hlsLoader.load(
+                sessionId,
+                playback,
+                (resolved) => {
+                    addon.loadPlayback(sessionId, this.subtitlePolicy.forReload(sessionId, resolved));
+                    this.onPlaybackReload?.(sessionId);
+                    // Sessions run with keep-open=yes, so EOF on a live stream leaves
+                    // mpv paused at the end of the old file and a plain loadfile
+                    // inherits that pause: the reload then buffers, reports
+                    // `paused` and never plays. Unpausing is part of the reload.
+                    try {
+                        addon.setPaused(sessionId, false);
+                    } catch (error) {
+                        console.warn(
+                            `[Embedded MPV][reconnect] session ${sessionId}: could not clear the keep-open pause after the reload:`,
+                            error
+                        );
+                    }
+                }
+            );
+            if (pending) pending.catch(() => {
+                console.warn('[Embedded MPV][reconnect] HLS reload failed');
+            });
         },
         publish: (sessionId) => {
             try {
@@ -621,6 +640,11 @@ export class EmbeddedMpvNativeService {
             restoreSubtitleAfterReconnect: false,
         });
 
+        this.hlsLoader.register(
+            sessionId,
+            process.platform === 'win32' && !usesFrameCopyAddon,
+            options?.extraOptions ?? []
+        );
         this.ensurePolling();
         this.ensureRendererLifecycleWatch();
         return (
@@ -645,7 +669,10 @@ export class EmbeddedMpvNativeService {
         );
     }
 
-    loadPlayback(sessionId: string, playback: ResolvedPortalPlayback): void {
+    loadPlayback(
+        sessionId: string,
+        playback: ResolvedPortalPlayback
+    ): void | Promise<void> {
         this.assertEmbeddedMpvEnabled();
         const addon = this.getAddon();
         const session = this.getRuntimeSession(sessionId);
@@ -661,8 +688,13 @@ export class EmbeddedMpvNativeService {
         // External subtitles are source-scoped: a user-driven load drops them.
         session.externalSubtitlePath = null;
         session.restoreSubtitleAfterReconnect = false;
-        addon.loadPlayback(sessionId, playback);
+        const enginePlayback = this.subtitlePolicy.forUserLoad(sessionId, playback);
+        const pending = this.hlsLoader.load(sessionId, enginePlayback, (resolved) => {
+            addon.loadPlayback(sessionId, resolved);
+            this.refreshSession(sessionId);
+        });
         this.refreshSession(sessionId);
+        return pending;
     }
 
     setBounds(sessionId: string, bounds: EmbeddedMpvBounds): void {
@@ -679,6 +711,8 @@ export class EmbeddedMpvNativeService {
     setPaused(sessionId: string, paused: boolean): EmbeddedMpvSession | null {
         this.assertEmbeddedMpvEnabled();
         if (paused) {
+            if (this.sessions.get(sessionId)?.reconnect.attemptInFlight)
+                this.hlsLoader.cancel(sessionId);
             // A pause sent while the session sits in a loss state never
             // surfaces as a `paused` status, so the command itself has to
             // call off a scheduled reload (see embedded-mpv-reconnect.ts).
@@ -749,6 +783,7 @@ export class EmbeddedMpvNativeService {
             );
         }
         addon.setSubtitleTrack(sessionId, trackId);
+        this.subtitlePolicy.selectTrack(sessionId, trackId);
         // An explicit pick after an external file was added hands the
         // selection back to the user: nothing is re-selected for them later.
         const session = this.sessions.get(sessionId);
@@ -1000,6 +1035,7 @@ export class EmbeddedMpvNativeService {
             return null;
         }
         this.reconnect.cancel(session.reconnect);
+        this.hlsLoader.dispose(sessionId);
         session.lastRecordingStart = null;
         session.recordingRunningAtLoss = false;
         session.restartRecordingAfterReconnect = false;
@@ -1023,6 +1059,7 @@ export class EmbeddedMpvNativeService {
         }
 
         this.sessions.delete(sessionId);
+        this.subtitlePolicy.dispose(sessionId);
         this.pollFailuresLogged.delete(sessionId);
         const payload: EmbeddedMpvSession = {
             id: session.id,
@@ -1215,8 +1252,12 @@ export class EmbeddedMpvNativeService {
         const payload: EmbeddedMpvSession = {
             id: session.id,
             title: session.title,
-            streamUrl: snapshot.streamUrl || session.streamUrl,
-            status: snapshot.status,
+            streamUrl:
+                this.hlsLoader.sourceUrl(sessionId, snapshot.streamUrl) ||
+                session.streamUrl,
+            status: this.hlsLoader.isResolving(sessionId)
+                ? 'loading'
+                : snapshot.status,
             positionSeconds: Math.max(0, Math.floor(snapshot.positionSeconds)),
             durationSeconds:
                 typeof snapshot.durationSeconds === 'number'

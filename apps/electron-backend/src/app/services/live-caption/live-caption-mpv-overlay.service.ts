@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EmbeddedMpvAiCaptionOverlay } from '@iptvnator/shared/interfaces';
 import { MpvJsonIpcClient } from './mpv-json-ipc-client';
+import { NativeSubtitleMpvBridge } from '../native-subtitle-mpv-bridge';
 
 const AI_CAPTION_OVERLAY_ID = 1;
 
@@ -9,7 +10,10 @@ interface SessionOverlayRuntime {
     client: MpvJsonIpcClient | null;
 }
 
-function normalizeDimension(value: number | undefined, fallback: number): number {
+function normalizeDimension(
+    value: number | undefined,
+    fallback: number
+): number {
     return Number.isFinite(value) && (value ?? 0) > 0
         ? Math.round(value as number)
         : fallback;
@@ -27,6 +31,10 @@ function normalizeZ(value: number | undefined): number {
  */
 export class LiveCaptionMpvOverlayService {
     private readonly sessions = new Map<string, SessionOverlayRuntime>();
+
+    nativeSubtitleBridge(sessionId: string): NativeSubtitleMpvBridge {
+        return new NativeSubtitleMpvBridge(this.getClient(this.getRuntime(sessionId)));
+    }
 
     /**
      * Allocates the pipe before libmpv is initialized so the path can be
@@ -47,7 +55,8 @@ export class LiveCaptionMpvOverlayService {
     ): Promise<void> {
         const runtime = this.getRuntime(sessionId);
         const client = this.getClient(runtime);
-        const assEvents = typeof overlay.assEvents === 'string' ? overlay.assEvents : '';
+        const assEvents =
+            typeof overlay.assEvents === 'string' ? overlay.assEvents : '';
         if (!assEvents) {
             await this.clearOverlay(sessionId);
             return;
@@ -69,15 +78,18 @@ export class LiveCaptionMpvOverlayService {
      * query here preserves the security boundary: renderer code still never
      * receives access to the general JSON-IPC pipe.
      */
-    async getPlaybackPositionSeconds(sessionId: string): Promise<number | null> {
+    async getPlaybackPositionSeconds(
+        sessionId: string
+    ): Promise<number | null> {
         const runtime = this.sessions.get(sessionId);
         if (!runtime) {
             return null;
         }
-        const value = await this.getClient(runtime).command({
-            _name: 'get_property',
-            name: 'time-pos',
-        });
+        // get_property is an IPC command, so it requires positional arguments.
+        const value = await this.getClient(runtime).command([
+            'get_property',
+            'time-pos',
+        ]);
         return typeof value === 'number' && Number.isFinite(value) && value >= 0
             ? value
             : null;
@@ -95,6 +107,90 @@ export class LiveCaptionMpvOverlayService {
             format: 'none',
             data: '',
         });
+    }
+
+    async getCaptionPlaybackContext(sessionId: string): Promise<{
+        source: string;
+        origin: number;
+        position: number;
+        aid: string;
+        userAgent: string;
+        referrer: string;
+        headers: string;
+        paused: boolean;
+    }> {
+        const client = this.getClient(this.getRuntime(sessionId));
+        const read = (name: string) => client.command(['get_property', name]);
+        const values = await Promise.all(
+            [
+                'stream-open-filename',
+                'demuxer-start-time',
+                'time-pos',
+                'aid',
+                'user-agent',
+                'referrer',
+                'http-header-fields',
+                'pause',
+                'rebase-start-time',
+            ].map(read)
+        );
+        const [
+            source,
+            start,
+            position,
+            aid,
+            userAgent,
+            referrer,
+            headers,
+            paused,
+            rebase,
+        ] = values;
+        if (
+            typeof source !== 'string' ||
+            !source ||
+            typeof start !== 'number' ||
+            typeof position !== 'number' ||
+            !Number.isFinite(start + position)
+        )
+            throw new Error(
+                'The player has no valid media clock for synchronized captions.'
+            );
+        return {
+            source,
+            origin: rebase === false ? 0 : start,
+            position,
+            aid: typeof aid === 'number' ? String(aid) : 'auto',
+            userAgent: typeof userAgent === 'string' ? userAgent : '',
+            referrer: typeof referrer === 'string' ? referrer : '',
+            headers: Array.isArray(headers)
+                ? headers.map(String).join(',')
+                : '',
+            paused: paused === true,
+        };
+    }
+
+    async setCaptionBuffering(
+        sessionId: string,
+        paused: boolean
+    ): Promise<void> {
+        await this.getClient(this.getRuntime(sessionId)).command([
+            'set_property',
+            'pause',
+            paused,
+        ]);
+    }
+
+    async alignCaptionPlayback(
+        sessionId: string,
+        position: number
+    ): Promise<void> {
+        if (!Number.isFinite(position) || position < 0)
+            throw new Error('Invalid caption media position.');
+        await this.getClient(this.getRuntime(sessionId)).command([
+            'seek',
+            position,
+            'absolute+exact',
+        ]);
     }
 
     disposeSession(sessionId: string): void {

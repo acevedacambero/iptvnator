@@ -76,8 +76,9 @@ export function resolveLiveCaptionWhisperModelPath(
     const candidates = dedupe([
         explicitPath?.trim() || undefined,
         process.env.IPTVNATOR_WHISPER_MODEL?.trim() || undefined,
-        path.join(modelDirectory, 'ggml-base.en-q5_1.bin'),
+        path.join(modelDirectory, 'ggml-small.en-q5_1.bin'),
         path.join(modelDirectory, 'ggml-small.en.bin'),
+        path.join(modelDirectory, 'ggml-base.en-q5_1.bin'),
         path.join(modelDirectory, 'ggml-base.en.bin'),
     ]);
     return candidates.find(readableRegularFile) ?? null;

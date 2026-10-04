@@ -1,7 +1,4 @@
-import {
-    buildAiCaptionAssOverlay,
-    escapeAssText,
-} from './ai-caption-ass';
+import { buildAiCaptionAssOverlay, escapeAssText } from './ai-caption-ass';
 
 describe('AI caption ASS overlay', () => {
     it('renders bilingual captions as two white ASS events with black outlines', () => {
@@ -71,6 +68,41 @@ describe('AI caption ASS overlay', () => {
         expect(translatedOnly.assEvents).not.toContain('English');
         expect(translatedOnly.assEvents).toContain('中文');
     });
+    it.each([
+        ['left', 1, 80],
+        ['center', 2, 960],
+        ['right', 3, 1840],
+    ] as const)(
+        'anchors %s captions and converts RGB colors to ASS BGR',
+        (alignment, anchor, x) => {
+            const overlay = buildAiCaptionAssOverlay(
+                {
+                    mode: 'bilingual',
+                    sourceText: 'English',
+                    translatedText: '中文',
+                },
+                {
+                    alignment,
+                    sourceColor: '#12ABEF',
+                    translatedColor: '#FFAA00',
+                }
+            );
+            const [source, translated] = overlay.assEvents.split('\n');
+            expect(source).toContain(`\\an${anchor}\\pos(${x},900)`);
+            expect(translated).toContain(`\\an${anchor}\\pos(${x},970)`);
+            expect(source).toContain('\\1c&H00EFAB12&');
+            expect(translated).toContain('\\1c&H0000AAFF&');
+            expect(source).toContain('\\3c&H00000000&');
+        }
+    );
+    it('does not insert arbitrary color tags into an overlay', () => {
+        const overlay = buildAiCaptionAssOverlay(
+            { mode: 'source-only', sourceText: 'Safe' },
+            { sourceColor: '}\\pos(1,2){' }
+        );
+        expect(overlay.assEvents).toContain('\\1c&H00FFFFFF&');
+        expect(overlay.assEvents).not.toContain('\\pos(1,2)');
+    });
 
     it('escapes ASS control characters from recognised text', () => {
         expect(escapeAssText('{\\pos(1,2)}\nnext')).toBe(
@@ -79,8 +111,8 @@ describe('AI caption ASS overlay', () => {
     });
 
     it('returns an empty overlay when there is nothing to display', () => {
-        expect(
-            buildAiCaptionAssOverlay({ mode: 'bilingual' }).assEvents
-        ).toBe('');
+        expect(buildAiCaptionAssOverlay({ mode: 'bilingual' }).assEvents).toBe(
+            ''
+        );
     });
 });

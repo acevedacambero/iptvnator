@@ -359,8 +359,12 @@ DWORD parsePid(const wchar_t* value)
 
 } // namespace
 
+int decodeCaptionAudio(int argc, wchar_t** argv);
+
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc > 1 && std::wcscmp(argv[1], L"--decode") == 0)
+        return decodeCaptionAudio(argc, argv);
     if (argc != 3 || std::wstring(argv[1]) != L"--pid") {
         std::fprintf(stderr, "Usage: iptvnator_caption_helper --pid <process-id>\n");
         return 64;

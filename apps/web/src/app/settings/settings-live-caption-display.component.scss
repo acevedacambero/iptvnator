@@ -1,0 +1,105 @@
+:host {
+    display: contents;
+}
+.caption-display {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    width: min(720px, 100%);
+}
+.caption-display__fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+}
+.caption-display__preview {
+    container-type: inline-size;
+    position: relative;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: #171717;
+    border-radius: 8px;
+}
+.caption-display__line {
+    position: absolute;
+    width: max-content;
+    max-width: 91.6%;
+    text-align: center;
+    line-height: 1;
+    color: #fff;
+    text-shadow:
+        0 1px 2px #000,
+        1px 0 2px #000;
+}
+.caption-display__position mat-slider {
+    width: calc(100% - 16px);
+}
+.caption-display__presets {
+    display: flex;
+    justify-content: space-between;
+}
+.caption-display__colors {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+    gap: 12px;
+}
+.caption-display__color {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    label {
+        color: var(--app-on-surface);
+        font-size: 13px;
+    }
+}
+.caption-display__color-inputs {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    mat-form-field {
+        min-width: 0;
+        flex: 1;
+    }
+    input[type='color'] {
+        width: 44px;
+        height: 44px;
+        flex-shrink: 0;
+        padding: 3px;
+        border: 1px solid var(--app-widget-border);
+        border-radius: 6px;
+        background: var(--app-widget-bg);
+        cursor: pointer;
+    }
+}
+.caption-display__swatches {
+    display: flex;
+    gap: 8px;
+    padding: 4px;
+    button {
+        width: 24px;
+        height: 24px;
+        border: 1px solid var(--app-widget-border);
+        border-radius: 50%;
+        cursor: pointer;
+        &.selected,
+        &:focus-visible {
+            outline: 2px solid var(--app-selection-color);
+            outline-offset: 2px;
+        }
+    }
+}
+.caption-display__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.caption-display__actions span {
+    color: var(--app-eyebrow-color);
+    font-size: 12px;
+}
+.caption-display__error {
+    color: var(--mat-sys-error, #ba1a1a);
+    font-size: 12px;
+    margin: 0;
+}

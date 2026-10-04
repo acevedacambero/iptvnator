@@ -1,8 +1,5 @@
 export type LiveCaptionRunState =
-    | 'inactive'
-    | 'starting'
-    | 'running'
-    | 'error';
+    'inactive' | 'starting' | 'running' | 'suspended' | 'error';
 
 export interface LiveCaptionSupport {
     supported: boolean;
@@ -15,8 +12,7 @@ export interface LiveCaptionSupport {
 }
 
 export type LiveCaptionTranslationProvider =
-    | 'google-free'
-    | 'openai-compatible';
+    'google-free' | 'openai-compatible';
 
 /**
  * Optional second-stage translation for live ASR captions.
@@ -79,12 +75,39 @@ export interface LiveCaptionStartOptions {
     translation?: LiveCaptionTranslationOptions;
 }
 
+/** Font sizes scale with the video height; values use a 1080p reference. */
+export type LiveCaptionAlignment = 'left' | 'center' | 'right';
+
+export interface LiveCaptionDisplaySettings {
+    sourceFontSize: number;
+    translatedFontSize: number;
+    bottomMarginPercent: number;
+    alignment: LiveCaptionAlignment;
+    sourceColor: string;
+    translatedColor: string;
+}
+
+export const DEFAULT_LIVE_CAPTION_DISPLAY_SETTINGS: Readonly<LiveCaptionDisplaySettings> =
+    {
+        sourceFontSize: 42,
+        translatedFontSize: 50,
+        bottomMarginPercent: 10.2,
+        alignment: 'center',
+        sourceColor: '#FFFFFF',
+        translatedColor: '#FFFFFF',
+    };
+
 /**
- * Measurement-only sync diagnostics. V2 P0 gathers these values before any
- * playback buffer is introduced; later adaptive-delay work uses P50/P95 rather
- * than guessing a fixed delay.
+ * Caption timing diagnostics. Media-PTS scheduling reports prepared lead and
+ * display error against ASR timestamps; legacy WASAPI lag excludes translation.
  */
 export interface LiveCaptionSyncTelemetry {
+    /** Arrival estimates are approximate when process loopback has no timestamps. */
+    clockSource?: 'wasapi' | 'arrival-estimate' | 'media-pts';
+    buffering?: boolean;
+    bufferAheadSeconds?: number;
+    /** Scheduler error against an estimated word timestamp, not optical latency. */
+    lastDisplayErrorMs?: number;
     clockAnchorCount: number;
     captionLagSampleCount: number;
     lastCaptionLagMs?: number;
@@ -92,7 +115,17 @@ export interface LiveCaptionSyncTelemetry {
     p95CaptionLagMs?: number;
 }
 
+export interface LiveCaptionRecordingExport {
+    state: 'working' | 'ready' | 'error';
+    filePath: string;
+    progress: number;
+    /** English is retained when individual translations fail. */
+    untranslatedCueCount?: number;
+    error?: string;
+}
+
 export interface LiveCaptionState {
+    recordingSubtitle?: LiveCaptionRecordingExport;
     state: LiveCaptionRunState;
     active: boolean;
     sessionId?: string;

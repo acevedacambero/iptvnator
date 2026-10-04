@@ -18,6 +18,9 @@ import {
     EMBEDDED_MPV_SET_SPEED,
     EMBEDDED_MPV_SET_SUBTITLE_DELAY,
     EMBEDDED_MPV_SET_SUBTITLE_STYLE,
+    EMBEDDED_MPV_GET_SUBTITLE_LAYERS,
+    EMBEDDED_MPV_SET_SUBTITLE_LAYERS,
+    NativeSubtitleLayers,
     EMBEDDED_MPV_SET_SUBTITLE_TRACK,
     EMBEDDED_MPV_SET_VOLUME,
     EmbeddedMpvAiCaptionOverlay,
@@ -31,6 +34,8 @@ import {
     EmbeddedMpvRecordingStartOptions,
     EmbeddedMpvSupport,
     LIVE_CAPTION_GET_STATE,
+    LIVE_CAPTION_DISPLAY_SETTINGS_GET,
+    LIVE_CAPTION_DISPLAY_SETTINGS_UPDATE,
     LIVE_CAPTION_GET_SUPPORT,
     LIVE_CAPTION_START,
     LIVE_CAPTION_STATE_CHANGED,
@@ -51,8 +56,14 @@ import { buildAiCaptionAssOverlay } from '../services/live-caption/ai-caption-as
 import { liveCaptionMpvOverlayService } from '../services/live-caption/live-caption-mpv-overlay.service';
 import { liveCaptionService } from '../services/live-caption/live-caption.service';
 import { liveCaptionTranslationSettingsStore } from '../services/live-caption/live-caption-translation-settings.store';
+import { liveCaptionDisplaySettingsStore } from '../services/live-caption/live-caption-display-settings.store';
+import { nativeSubtitleLayersService } from '../services/native-subtitle-layers.service';
+import { isLiveEmbeddedMpvPlayback } from '../services/embedded-mpv-reconnect';
 
 const AI_CAPTION_P0_TEST_ENV = 'IPTVNATOR_AI_CAPTION_P0_TEST';
+embeddedMpvNativeService.setPlaybackReloadHandler((sessionId) => {
+    void liveCaptionService.reset(sessionId).catch(() => undefined);
+});
 
 export default class EmbeddedMpvEvents {
     static bootstrapEmbeddedMpvEvents(): Electron.IpcMain {
@@ -84,6 +95,7 @@ function withAiCaptionSupport(support: EmbeddedMpvSupport): EmbeddedMpvSupport {
         capabilities: {
             ...support.capabilities,
             aiCaptionOverlay: true,
+            nativeSubtitleLayers: true,
         },
     };
 }
@@ -120,6 +132,17 @@ handleEmbeddedMpv(LIVE_CAPTION_GET_SUPPORT, () =>
     liveCaptionService.getSupport()
 );
 handleEmbeddedMpv(LIVE_CAPTION_GET_STATE, () => liveCaptionService.getState());
+handleEmbeddedMpv(LIVE_CAPTION_DISPLAY_SETTINGS_GET, () =>
+    liveCaptionDisplaySettingsStore.get()
+);
+handleEmbeddedMpv(
+    LIVE_CAPTION_DISPLAY_SETTINGS_UPDATE,
+    async (settings: unknown) => {
+        const saved = liveCaptionDisplaySettingsStore.update(settings);
+        await liveCaptionService.refreshDisplayStyle();
+        return saved;
+    }
+);
 handleEmbeddedMpv(
     LIVE_CAPTION_START,
     (sessionId: string, options?: LiveCaptionStartOptions) =>
@@ -184,8 +207,12 @@ handleEmbeddedMpv(
         // A new file behind the same libmpv session is a new caption
         // generation. Stop capture first so a late ASR result can never paint
         // over the replacement channel/programme.
-        await liveCaptionService.stop(sessionId);
-        const result = getService().loadPlayback(sessionId, playback);
+        const result = await nativeSubtitleLayersService.withPlaybackChange(
+            sessionId, !isLiveEmbeddedMpvPlayback(playback),
+            () => liveCaptionService.withPlaybackChange(
+                sessionId, () => getService().loadPlayback(sessionId, playback)
+            )
+        );
         // P0 probe: opt-in only. It proves the full Windows libmpv named-pipe
         // -> JSON IPC -> ASS OSD path (including Chinese glyph rendering)
         // before WASAPI/Whisper are introduced. Normal builds never show it.
@@ -198,8 +225,10 @@ handleEmbeddedMpv(
                 sessionId,
                 buildAiCaptionAssOverlay({
                     mode: 'bilingual',
-                    sourceText: 'IPTVnator AI live captions — P0 overlay path active',
-                    translatedText: 'IPTVnator AI 实时双语字幕 — P0 显示通道已启用',
+                    sourceText:
+                        'IPTVnator AI live captions — P0 overlay path active',
+                    translatedText:
+                        'IPTVnator AI 实时双语字幕 — P0 显示通道已启用',
                 })
             );
         }
@@ -215,18 +244,25 @@ handleEmbeddedMpv(
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_SET_PAUSED,
-    (sessionId: string, paused: boolean) =>
-        getService().setPaused(sessionId, paused)
+    async (sessionId: string, paused: boolean) => {
+        const result = getService().setPaused(sessionId, paused);
+        await liveCaptionService.setPaused(sessionId, paused);
+        return result;
+    }
 );
 
 handleEmbeddedMpv(EMBEDDED_MPV_SEEK, (sessionId: string, seconds: number) =>
-    getService().seek(sessionId, seconds)
+    liveCaptionService.withPlaybackChange(sessionId, () =>
+        getService().seek(sessionId, seconds)
+    )
 );
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_SEEK_BY,
     (sessionId: string, deltaSeconds: number) =>
-        getService().seekBy(sessionId, deltaSeconds)
+        liveCaptionService.withPlaybackChange(sessionId, () =>
+            getService().seekBy(sessionId, deltaSeconds)
+        )
 );
 
 handleEmbeddedMpv(
@@ -238,14 +274,21 @@ handleEmbeddedMpv(
 handleEmbeddedMpv(
     EMBEDDED_MPV_SET_AUDIO_TRACK,
     (sessionId: string, trackId: number) =>
-        getService().setAudioTrack(sessionId, trackId)
+        liveCaptionService.withPlaybackChange(sessionId, () =>
+            getService().setAudioTrack(sessionId, trackId)
+        )
 );
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_SET_SUBTITLE_TRACK,
-    (sessionId: string, trackId: number) =>
-        getService().setSubtitleTrack(sessionId, trackId)
+    async (sessionId: string, trackId: number) => {
+        await nativeSubtitleLayersService.stop(sessionId);
+        return getService().setSubtitleTrack(sessionId, trackId);
+    }
 );
+
+handleEmbeddedMpv(EMBEDDED_MPV_GET_SUBTITLE_LAYERS, (sessionId: string) => nativeSubtitleLayersService.get(sessionId));
+handleEmbeddedMpv(EMBEDDED_MPV_SET_SUBTITLE_LAYERS, (sessionId: string, layers: NativeSubtitleLayers | null, revision: number) => nativeSubtitleLayersService.set(sessionId, layers, revision));
 
 handleEmbeddedMpv(
     EMBEDDED_MPV_ADD_SUBTITLE,
@@ -275,13 +318,14 @@ handleEmbeddedMpv(
         liveCaptionMpvOverlayService.setOverlay(sessionId, overlay)
 );
 
-handleEmbeddedMpv(
-    EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY,
-    (sessionId: string) => liveCaptionMpvOverlayService.clearOverlay(sessionId)
+handleEmbeddedMpv(EMBEDDED_MPV_CLEAR_AI_CAPTION_OVERLAY, (sessionId: string) =>
+    liveCaptionMpvOverlayService.clearOverlay(sessionId)
 );
 
 handleEmbeddedMpv(EMBEDDED_MPV_SET_SPEED, (sessionId: string, speed: number) =>
-    getService().setSpeed(sessionId, speed)
+    liveCaptionService.withPlaybackChange(sessionId, () =>
+        getService().setSpeed(sessionId, speed)
+    )
 );
 
 handleEmbeddedMpv(
@@ -308,20 +352,19 @@ handleEmbeddedMpv(EMBEDDED_MPV_SELECT_RECORDING_FOLDER, () =>
     getService().selectRecordingFolder()
 );
 
-handleEmbeddedMpv(
-    EMBEDDED_MPV_DISPOSE_SESSION,
-    async (sessionId: string) => {
-        await liveCaptionService.stop(sessionId);
-        liveCaptionMpvOverlayService.disposeSession(sessionId);
-        return getService().disposeSession(sessionId);
-    }
-);
+handleEmbeddedMpv(EMBEDDED_MPV_DISPOSE_SESSION, async (sessionId: string) => {
+    await nativeSubtitleLayersService.forget(sessionId);
+    await liveCaptionService.stop(sessionId);
+    liveCaptionMpvOverlayService.disposeSession(sessionId);
+    return getService().disposeSession(sessionId);
+});
 
 handleEmbeddedMpv(EMBEDDED_MPV_GET_FRAME_SOURCE, (sessionId: string) =>
     getService().getFrameSource(sessionId)
 );
 
 export function shutdownEmbeddedMpv(): void {
+    nativeSubtitleLayersService.shutdown();
     liveCaptionService.shutdown();
     liveCaptionMpvOverlayService.shutdown();
     getService().shutdown();

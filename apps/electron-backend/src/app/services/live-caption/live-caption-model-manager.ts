@@ -6,12 +6,12 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 export const DEFAULT_LIVE_CAPTION_MODEL = Object.freeze({
-    name: 'base.en-q5_1',
-    fileName: 'ggml-base.en-q5_1.bin',
+    name: 'small.en-q5_1',
+    fileName: 'ggml-small.en-q5_1.bin',
     // Pin the immutable HF revision that introduced this exact LFS object.
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-base.en-q5_1.bin',
-    size: 59_721_011,
-    sha256: '4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f',
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin',
+    size: 190_098_681,
+    sha256: 'bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30',
 });
 
 function defaultModelPath(): string {
@@ -37,7 +37,9 @@ async function isVerifiedModel(filePath: string): Promise<boolean> {
         if (!stat.isFile() || stat.size !== DEFAULT_LIVE_CAPTION_MODEL.size) {
             return false;
         }
-        return (await sha256File(filePath)) === DEFAULT_LIVE_CAPTION_MODEL.sha256;
+        return (
+            (await sha256File(filePath)) === DEFAULT_LIVE_CAPTION_MODEL.sha256
+        );
     } catch {
         return false;
     }
@@ -48,7 +50,7 @@ async function isVerifiedModel(filePath: string): Promise<boolean> {
  * start live captions. A partial or mismatched object is never promoted to the
  * model path, and the .partial file is cleaned on every failure.
  */
-export async function ensureDefaultLiveCaptionModel(): Promise<string> {
+async function downloadDefaultLiveCaptionModel(): Promise<string> {
     const targetPath = defaultModelPath();
     if (await isVerifiedModel(targetPath)) {
         return targetPath;
@@ -87,12 +89,17 @@ export async function ensureDefaultLiveCaptionModel(): Promise<string> {
         source.on('data', (chunk: Buffer) => {
             received += chunk.length;
             if (received > DEFAULT_LIVE_CAPTION_MODEL.size) {
-                source.destroy(new Error('Whisper model download exceeded expected size.'));
+                source.destroy(
+                    new Error('Whisper model download exceeded expected size.')
+                );
                 return;
             }
             hash.update(chunk);
         });
-        await pipeline(source, fs.createWriteStream(partialPath, { flags: 'wx' }));
+        await pipeline(
+            source,
+            fs.createWriteStream(partialPath, { flags: 'wx' })
+        );
 
         if (received !== DEFAULT_LIVE_CAPTION_MODEL.size) {
             throw new Error(
@@ -110,9 +117,23 @@ export async function ensureDefaultLiveCaptionModel(): Promise<string> {
         await fs.promises.rename(partialPath, targetPath);
         return targetPath;
     } catch (error) {
-        await fs.promises.rm(partialPath, { force: true }).catch(() => undefined);
+        await fs.promises
+            .rm(partialPath, { force: true })
+            .catch(() => undefined);
         throw error;
     }
+}
+
+let inFlightModel: Promise<string> | null = null;
+
+/** Share one verified download across superseding Start requests. */
+export function ensureDefaultLiveCaptionModel(): Promise<string> {
+    if (!inFlightModel) {
+        inFlightModel = downloadDefaultLiveCaptionModel().finally(() => {
+            inFlightModel = null;
+        });
+    }
+    return inFlightModel;
 }
 
 export function getDefaultLiveCaptionModelPath(): string {

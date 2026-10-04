@@ -37,6 +37,8 @@ export interface EmbeddedMpvCapabilities {
     subtitleStyle?: boolean;
     /** Persistent custom ASS overlay used by the Windows AI-caption pipeline. */
     aiCaptionOverlay?: boolean;
+    /** Two independently styled text subtitle tracks (Windows native view). */
+    nativeSubtitleLayers?: boolean;
 }
 
 /**

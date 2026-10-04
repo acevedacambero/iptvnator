@@ -1,4 +1,5 @@
 import { LiveCaptionDisplayPayload } from './live-caption.types';
+import type { LiveCaptionAlignment } from '@iptvnator/shared/interfaces';
 
 export interface AiCaptionAssStyle {
     playResX: number;
@@ -9,6 +10,9 @@ export interface AiCaptionAssStyle {
     translatedY: number;
     outlineSize: number;
     shadowSize: number;
+    alignment: LiveCaptionAlignment;
+    sourceColor: string;
+    translatedColor: string;
 }
 
 export interface AiCaptionAssOverlay {
@@ -27,6 +31,9 @@ export const DEFAULT_AI_CAPTION_ASS_STYLE: AiCaptionAssStyle = {
     translatedY: 970,
     outlineSize: 3,
     shadowSize: 0,
+    alignment: 'center',
+    sourceColor: '#FFFFFF',
+    translatedColor: '#FFFFFF',
 };
 
 const DEFAULT_OVERLAY_Z = 50;
@@ -52,19 +59,26 @@ function eventLine(
     text: string,
     y: number,
     fontSize: number,
+    color: string,
     style: AiCaptionAssStyle
 ): string {
-    const x = Math.round(style.playResX / 2);
+    const anchor =
+        style.alignment === 'left' ? 1 : style.alignment === 'right' ? 3 : 2;
+    const x = Math.round(
+        style.playResX * (anchor === 1 ? 1 / 24 : anchor === 3 ? 23 / 24 : 0.5)
+    );
+    const rgb = /^#[0-9a-f]{6}$/i.test(color)
+        ? color.slice(1).toUpperCase()
+        : 'FFFFFF';
+    const bgr = `${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`;
     return [
-        '{\\an2',
+        `{\\an${anchor}`,
         `\\pos(${x},${Math.round(y)})`,
         `\\fs${Math.round(fontSize)}`,
         `\\bord${style.outlineSize}`,
         `\\shad${style.shadowSize}`,
-        // ASS colours are &HAABBGGRR&. V2 baseline is white text with a
-        // black outline; size and vertical position remain style parameters
-        // so the Settings UI can expose them without changing the renderer.
-        '\\1c&H00FFFFFF&',
+        // ASS uses &HAABBGGRR& rather than the UI's #RRGGBB.
+        `\\1c&H00${bgr}&`,
         '\\3c&H00000000&',
         '}',
         escapeAssText(text),
@@ -96,6 +110,7 @@ export function buildAiCaptionAssOverlay(
                 source,
                 style.sourceY,
                 style.sourceFontSize,
+                style.sourceColor,
                 style
             )
         );
@@ -110,6 +125,7 @@ export function buildAiCaptionAssOverlay(
                 translated,
                 style.translatedY,
                 style.translatedFontSize,
+                style.translatedColor,
                 style
             )
         );

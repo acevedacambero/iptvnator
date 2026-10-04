@@ -2075,6 +2075,10 @@ Napi::Value LoadPlayback(const Napi::CallbackInfo& info)
     }
 
     std::vector<std::pair<std::string, std::string>> options;
+    if (playback.Has("subtitleTrackId") && playback.Get("subtitleTrackId").IsNumber()) {
+        const int64_t trackId = playback.Get("subtitleTrackId").As<Napi::Number>().Int64Value();
+        options.emplace_back("sid", trackId < 0 ? "no" : std::to_string(trackId));
+    }
     if (!title.empty()) {
         options.emplace_back("force-media-title", title);
     }

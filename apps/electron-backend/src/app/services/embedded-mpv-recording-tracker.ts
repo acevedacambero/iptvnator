@@ -7,6 +7,7 @@ import {
 import { getDatabase } from '../database/connection';
 import * as schema from '../database/schema';
 import { broadcastRecordingsUpdate } from '../events/database/recording-broadcast';
+import { liveCaptionRecordingExporter } from './live-caption/live-caption-recording-exporter';
 
 interface RecordingStartedEvent {
     sessionId: string;
@@ -118,6 +119,7 @@ export class EmbeddedMpvRecordingTracker {
     private chain: Promise<void> = Promise.resolve();
 
     onRecordingStarted(event: RecordingStartedEvent): void {
+        liveCaptionRecordingExporter.begin(event.sessionId, event.targetPath);
         // A session runs at most one recording, so a new start means any
         // recording still open on this session has stopped. Once the map
         // entry is replaced, snapshots can no longer reach the old entry —
@@ -325,6 +327,7 @@ export class EmbeddedMpvRecordingTracker {
             return;
         }
         entry.finalized = true;
+        liveCaptionRecordingExporter.finish(entry.targetPath);
         // Keep the row visible to activeRowIds() until the terminal update
         // commits — it is still persisted as 'recording' meanwhile.
         this.finalizing.add(entry);

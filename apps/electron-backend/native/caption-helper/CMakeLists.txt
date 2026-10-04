@@ -10,17 +10,19 @@ if(NOT EXISTS "${WHISPER_CPP_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR "WHISPER_CPP_ROOT does not contain whisper.cpp: ${WHISPER_CPP_ROOT}")
 endif()
 
-# The IPTVnator worker is deliberately self-contained in V1. Static linking
-# avoids a second DLL dependency bundle beside the helper and keeps runtime
-# probing straightforward. CPU-only is the compatibility baseline; GPU can be
-# added later behind the same stdin/stdout protocol.
+# Static Whisper/ggml linking keeps the CPU compatibility build self-contained.
+# The optional CUDA variant also requires adjacent CUDA runtime/cuBLAS DLLs.
+option(IPTVNATOR_WHISPER_CUDA "Build the optional NVIDIA caption worker" OFF)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_IS_DEV OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
-set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+set(GGML_CUDA ${IPTVNATOR_WHISPER_CUDA} CACHE BOOL "" FORCE)
+if(IPTVNATOR_WHISPER_CUDA)
+    set(GGML_CUDA_FA_ALL_QUANTS OFF CACHE BOOL "" FORCE)
+endif()
 set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
 set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
 set(GGML_SYCL OFF CACHE BOOL "" FORCE)
@@ -30,6 +32,9 @@ add_subdirectory("${WHISPER_CPP_ROOT}" whisper-cpp EXCLUDE_FROM_ALL)
 add_executable(iptvnator_whisper_helper whisper_worker.cpp)
 target_compile_features(iptvnator_whisper_helper PRIVATE cxx_std_17)
 target_link_libraries(iptvnator_whisper_helper PRIVATE whisper)
+if(IPTVNATOR_WHISPER_CUDA)
+    target_compile_definitions(iptvnator_whisper_helper PRIVATE IPTVNATOR_WHISPER_CUDA=1)
+endif()
 
 if(MSVC)
     target_compile_options(iptvnator_whisper_helper PRIVATE /utf-8 /EHsc)

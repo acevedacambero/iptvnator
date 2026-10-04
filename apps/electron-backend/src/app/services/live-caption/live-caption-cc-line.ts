@@ -1,6 +1,6 @@
 const DEFAULT_WORD_LIMIT = 9;
 const DEFAULT_MIN_PUNCTUATION_WORDS = 3;
-const SENTENCE_END = /[.!?…][\"'”’)]*$/;
+const SENTENCE_END = /[.!?…]["'”’)]*$/;
 
 function normalize(value: string): string {
     return value.replace(/\s+/g, ' ').trim();

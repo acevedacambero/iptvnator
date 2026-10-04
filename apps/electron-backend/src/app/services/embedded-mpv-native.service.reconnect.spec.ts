@@ -23,6 +23,7 @@ import path from 'path';
 import type { EmbeddedMpvNativeService as EmbeddedMpvNativeServiceType } from './embedded-mpv-native.service';
 
 const mockSpawnSync = jest.fn();
+const supportsPosixFileModes = process.platform !== 'win32';
 const mockIsFrameCopyRuntimeUsable = jest.fn<boolean, []>();
 const mockGetFrameCopyRuntimeAvailability = jest.fn();
 
@@ -286,7 +287,7 @@ describe('EmbeddedMpvNativeService reconnect', () => {
         expect(readFileSync(file, 'utf8')).toBe(
             'network-timeout=10\nhttp-header-fields=X-Key: secret\n'
         );
-        expect(statSync(file).mode & 0o777).toBe(0o600);
+        if (supportsPosixFileModes) expect(statSync(file).mode & 0o777).toBe(0o600);
 
         service.disposeSession('session-1');
         expect(existsSync(file)).toBe(false);
@@ -563,7 +564,7 @@ describe('EmbeddedMpvNativeService reconnect', () => {
         jest.advanceTimersByTime(2_000);
 
         expect(addon.loadPlayback).toHaveBeenCalledTimes(2);
-        expect(addon.loadPlayback).toHaveBeenLastCalledWith('session-1', LIVE);
+        expect(addon.loadPlayback).toHaveBeenLastCalledWith('session-1', { ...LIVE, subtitleTrackId: -1 });
         // keep-open leaves mpv paused after EOF; the reload must clear it.
         expect(addon.setPaused).toHaveBeenCalledWith('session-1', false);
         expect(lastUpdate()?.status).toBe('loading');
@@ -642,7 +643,7 @@ describe('EmbeddedMpvNativeService reconnect', () => {
         jest.advanceTimersByTime(60_000);
 
         expect(addon.loadPlayback).toHaveBeenCalledTimes(2);
-        expect(addon.loadPlayback).toHaveBeenLastCalledWith('session-1', next);
+        expect(addon.loadPlayback).toHaveBeenLastCalledWith('session-1', { ...next, subtitleTrackId: -1 });
     });
 
     it('drops the pending reload when the user pauses from the error state', () => {

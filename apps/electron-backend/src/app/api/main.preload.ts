@@ -38,6 +38,8 @@ import type {
     EmbeddedMpvSubtitleStyle,
     EmbeddedMpvSession,
     EmbeddedMpvSupport,
+    NativeSubtitleLayers,
+    NativeSubtitleLayersState,
     ElectronBridgeApi,
     ElectronBridgeAppUpdateReleaseNotesRequest,
     ElectronBridgeAppUpdateStatus,
@@ -637,6 +639,10 @@ const electronApi: ElectronBridgeApi = {
         ipcRenderer.invoke('EMBEDDED_MPV_SET_SUBTITLE_STYLE', sessionId, style),
     selectEmbeddedMpvSubtitleFile: (): Promise<string | null> =>
         ipcRenderer.invoke('EMBEDDED_MPV_SELECT_SUBTITLE_FILE'),
+    getEmbeddedMpvSubtitleLayers: (sessionId: string): Promise<NativeSubtitleLayersState> =>
+        ipcRenderer.invoke('EMBEDDED_MPV_GET_SUBTITLE_LAYERS', sessionId),
+    setEmbeddedMpvSubtitleLayers: (sessionId: string, layers: NativeSubtitleLayers | null, playbackRevision: number): Promise<NativeSubtitleLayersState> =>
+        ipcRenderer.invoke('EMBEDDED_MPV_SET_SUBTITLE_LAYERS', sessionId, layers, playbackRevision),
     setEmbeddedMpvSpeed: (
         sessionId: string,
         speed: number

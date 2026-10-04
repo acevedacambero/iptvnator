@@ -7,6 +7,26 @@ const VLC = ['vlc', 'external player'];
 export const PLAYBACK_SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] =
     [
         {
+            id: 'live-caption-display',
+            section: 'playback',
+            labelKey: 'SETTINGS.LIVE_CAPTION_DISPLAY.TITLE',
+            descriptionKey: 'SETTINGS.LIVE_CAPTION_DISPLAY.DESCRIPTION',
+            keywords: [
+                'AI',
+                'caption',
+                'subtitle',
+                'font',
+                'position',
+                'color',
+                'colour',
+                '字幕',
+                '字号',
+                '位置',
+                '颜色',
+            ],
+            fallbackId: 'video-player',
+        },
+        {
             id: 'video-player',
             section: 'playback',
             labelKey: 'SETTINGS.VIDEO_PLAYER_LABEL',

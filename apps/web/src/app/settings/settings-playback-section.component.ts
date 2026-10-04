@@ -21,6 +21,7 @@ import {
 } from '@iptvnator/shared/interfaces';
 import { SettingsPlayerOption } from './settings.models';
 import { SettingsLiveCaptionTranslationComponent } from './settings-live-caption-translation.component';
+import { SettingsLiveCaptionDisplayComponent } from './settings-live-caption-display.component';
 
 @Component({
     selector: 'app-settings-playback-section',
@@ -34,6 +35,7 @@ import { SettingsLiveCaptionTranslationComponent } from './settings-live-caption
         MatSelectModule,
         ReactiveFormsModule,
         SettingsLiveCaptionTranslationComponent,
+        SettingsLiveCaptionDisplayComponent,
         TranslateModule,
     ],
     templateUrl: './settings-playback-section.component.html',

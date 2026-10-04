@@ -3,11 +3,14 @@ jest.mock('electron', () => ({
         handle: jest.fn(),
     },
 }));
+jest.mock('../app', () => ({ __esModule: true, default: { mainWindow: null } }));
 
 const mockEmbeddedMpvService = {
     createSession: jest.fn(),
     getSupport: jest.fn(),
+    getActiveEngine: jest.fn(() => null),
     setPaused: jest.fn(),
+    setPlaybackReloadHandler: jest.fn(),
 };
 const mockSessionOptions = {
     extraOptions: ['network-timeout=10', 'hwdec=no'],

@@ -1,7 +1,5 @@
-import {
-    EmbeddedMpvFrameSource,
-    ResolvedPortalPlayback,
-} from '@iptvnator/shared/interfaces';
+import { EmbeddedMpvFrameSource } from '@iptvnator/shared/interfaces';
+import type { NativeEmbeddedMpvPlayback } from './embedded-mpv-subtitle-policy';
 import { joinMpvHeaderFields } from '../util/mpv-string-list.util';
 import type { NativeEmbeddedMpvSessionSnapshot } from './embedded-mpv-native.service';
 
@@ -61,9 +59,14 @@ export function createInitialSnapshot(): NativeEmbeddedMpvSessionSnapshot {
 
 /** Build the `load` command line for a resolved playback target. */
 export function buildLoadPlaybackCommand(
-    playback: ResolvedPortalPlayback
+    playback: NativeEmbeddedMpvPlayback
 ): string {
     const fields: string[] = [`url=${encodeProtocolValue(playback.streamUrl)}`];
+    if (typeof playback.subtitleTrackId === 'number') {
+        fields.push(
+            `opt.sid=${playback.subtitleTrackId < 0 ? 'no' : playback.subtitleTrackId}`
+        );
+    }
     if (playback.title) {
         fields.push(
             `opt.force-media-title=${encodeProtocolValue(playback.title)}`

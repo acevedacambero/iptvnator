@@ -37,7 +37,9 @@ export class MpvJsonIpcClient {
 
     constructor(private readonly pipePath: string) {}
 
-    async command(command: Record<string, unknown>): Promise<unknown> {
+    async command(
+        command: Record<string, unknown> | readonly unknown[]
+    ): Promise<unknown> {
         await this.ensureConnected();
         const socket = this.socket;
         if (!socket || socket.destroyed) {
@@ -109,7 +111,9 @@ export class MpvJsonIpcClient {
         }
         throw new Error(
             `Unable to connect to MPV IPC pipe ${this.pipePath}: ${
-                lastError instanceof Error ? lastError.message : String(lastError)
+                lastError instanceof Error
+                    ? lastError.message
+                    : String(lastError)
             }`
         );
     }
@@ -182,7 +186,9 @@ export class MpvJsonIpcClient {
             clearTimeout(pending.timer);
             this.pending.delete(message.request_id);
             if (message.error && message.error !== 'success') {
-                pending.reject(new Error(`MPV command failed: ${message.error}`));
+                pending.reject(
+                    new Error(`MPV command failed: ${message.error}`)
+                );
             } else {
                 pending.resolve(message.data);
             }

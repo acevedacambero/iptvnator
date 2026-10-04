@@ -79,6 +79,16 @@
     bottom: var(--embedded-mpv-controls-height);
 }
 
+// A hidden native dock must not shorten the fullscreen video area: on a
+// 16:9 display that forces mpv to add side bars to a 16:9 stream. Reserve
+// space again while controls/menus are visible so the HWND cannot cover them.
+.embedded-mpv-player--fullscreen.embedded-mpv-player--controls-enabled:not(
+        .embedded-mpv-player--controls-visible
+    )
+    .embedded-mpv-player__viewport {
+    bottom: 0;
+}
+
 .embedded-mpv-player__loader {
     position: absolute;
     inset: 0;

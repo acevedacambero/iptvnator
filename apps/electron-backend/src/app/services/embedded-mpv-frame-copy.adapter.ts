@@ -4,8 +4,8 @@ import path from 'path';
 import {
     EmbeddedMpvBounds,
     EmbeddedMpvFrameSource,
-    ResolvedPortalPlayback,
 } from '@iptvnator/shared/interfaces';
+import type { NativeEmbeddedMpvPlayback } from './embedded-mpv-subtitle-policy';
 import { isFrameCopyPlatformSupported } from './embedded-mpv-frame-copy-platform.util';
 import {
     applyHelperEvent,
@@ -168,7 +168,7 @@ export class EmbeddedMpvFrameCopyAdapter implements NativeEmbeddedMpvAddon {
         return sessionId;
     }
 
-    loadPlayback(sessionId: string, playback: ResolvedPortalPlayback): void {
+    loadPlayback(sessionId: string, playback: NativeEmbeddedMpvPlayback): void {
         const session = this.sessions.get(sessionId);
         if (session && !session.disposed) {
             if (

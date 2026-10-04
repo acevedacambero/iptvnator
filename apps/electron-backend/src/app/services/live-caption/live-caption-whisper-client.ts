@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'child_process';
+import type { LiveCaptionTimedToken } from './live-caption-timeline';
 import {
     resolveLiveCaptionWhisperHelperPath,
     resolveLiveCaptionWhisperModelPath,
@@ -18,11 +19,13 @@ interface WhisperWorkerReply {
     elapsedMs?: number;
     error?: string;
     message?: string;
+    tokens?: LiveCaptionTimedToken[];
 }
 
 export interface LiveCaptionWhisperResult {
     text: string;
     elapsedMs: number;
+    tokens?: LiveCaptionTimedToken[];
 }
 
 interface PendingInference {
@@ -62,10 +65,12 @@ export class LiveCaptionWhisperClient {
         return this.pending !== null;
     }
 
-    async start(options: {
-        modelPath?: string;
-        threads?: number;
-    } = {}): Promise<WhisperWorkerReady> {
+    async start(
+        options: {
+            modelPath?: string;
+            threads?: number;
+        } = {}
+    ): Promise<WhisperWorkerReady> {
         if (this.running && this.readyPromise) {
             return this.readyPromise;
         }
@@ -98,13 +103,17 @@ export class LiveCaptionWhisperClient {
         });
         this.child = child;
 
-        this.readyPromise = new Promise<WhisperWorkerReady>((resolve, reject) => {
-            this.readyResolve = resolve;
-            this.readyReject = reject;
-        });
+        this.readyPromise = new Promise<WhisperWorkerReady>(
+            (resolve, reject) => {
+                this.readyResolve = resolve;
+                this.readyReject = reject;
+            }
+        );
         const startTimer = setTimeout(() => {
             this.failReady(
-                new Error('Whisper worker did not become ready before the timeout.')
+                new Error(
+                    'Whisper worker did not become ready before the timeout.'
+                )
             );
             this.stop();
         }, START_TIMEOUT_MS);
@@ -159,6 +168,9 @@ export class LiveCaptionWhisperClient {
         }
         await ready;
 
+        const input = this.child?.stdin;
+        if (!input || input.destroyed) throw new Error('Whisper worker stopped.');
+
         const requestId = this.nextRequestId++ >>> 0;
         const header = Buffer.allocUnsafe(8);
         header.writeUInt32LE(requestId, 0);
@@ -172,7 +184,7 @@ export class LiveCaptionWhisperClient {
                 reject(new Error('Whisper inference timed out.'));
             }, INFERENCE_TIMEOUT_MS);
             this.pending = { requestId, resolve, reject, timer };
-            this.child!.stdin!.write(Buffer.concat([header, pcm]), (error) => {
+            input.write(Buffer.concat([header, pcm]), (error) => {
                 if (error && this.pending?.requestId === requestId) {
                     this.failPending(error);
                 }
@@ -219,7 +231,8 @@ export class LiveCaptionWhisperClient {
     private consumeLine(line: string): void {
         let message: WhisperWorkerReady | WhisperWorkerReply;
         try {
-            message = JSON.parse(line) as WhisperWorkerReady | WhisperWorkerReply;
+            message = JSON.parse(line) as
+                WhisperWorkerReady | WhisperWorkerReply;
         } catch {
             return;
         }
@@ -251,6 +264,9 @@ export class LiveCaptionWhisperClient {
         pending.resolve({
             text: (message.text ?? '').trim(),
             elapsedMs: Math.max(0, Math.round(message.elapsedMs ?? 0)),
+            ...(Array.isArray(message.tokens)
+                ? { tokens: message.tokens }
+                : {}),
         });
     }
 

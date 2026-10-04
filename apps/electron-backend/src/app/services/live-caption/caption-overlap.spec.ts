@@ -46,4 +46,36 @@ describe('caption overlap', () => {
             'First sentence. Second sentence.'
         );
     });
+
+    it('deduplicates the full six-second news window beyond sixteen words', () => {
+        const words =
+            'The regional council has announced a new programme that will improve local transport services and provide additional support for rural communities';
+        expect(extractNovelCaptionText(words, `${words} next year.`)).toBe(
+            'next year.'
+        );
+        expect(
+            extractNovelCaptionText(
+                words,
+                `${words.split(' ').slice(3).join(' ')} next year.`
+            )
+        ).toBe('next year.');
+    });
+
+    it('does not append a whole window when Whisper revises an interior word', () => {
+        expect(
+            extractNovelCaptionText(
+                'The regional counsel has announced a new programme for local transport services',
+                'The regional council has announced a new programme for local transport services next year'
+            )
+        ).toBe('next year');
+    });
+
+    it('keeps unrelated speech even when it shares common short ending words', () => {
+        expect(
+            extractNovelCaptionText(
+                'The bus was delayed in the city',
+                'A new school has opened in the city today'
+            )
+        ).toBe('A new school has opened in the city today');
+    });
 });

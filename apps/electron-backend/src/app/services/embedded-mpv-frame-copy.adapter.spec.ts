@@ -286,6 +286,17 @@ describe('EmbeddedMpvFrameCopyAdapter', () => {
         expect(line).toContain('opt.http-header-fields=X-Token: abc');
     });
 
+    it('passes file-scoped subtitle defaults and manual reconnect choices to the helper', () => {
+        const sessionId = createSession();
+        const playback = { streamUrl: 'http://host/live.ts', title: 'Live' };
+        adapter.loadPlayback(sessionId, { ...playback, subtitleTrackId: -1 });
+        expect(child.stdin.written.at(-1)).toContain('opt.sid=no');
+        adapter.loadPlayback(sessionId, { ...playback, subtitleTrackId: 3 });
+        expect(child.stdin.written.at(-1)).toContain('opt.sid=3');
+        adapter.loadPlayback(sessionId, { ...playback, isLive: false });
+        expect(child.stdin.written.at(-1)).not.toContain('opt.sid=');
+    });
+
     it('sends absolute and relative seeks as distinct protocol commands', () => {
         const sessionId = createSession();
 
